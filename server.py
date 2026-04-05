@@ -2,6 +2,7 @@ import os
 import re
 import time
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from collections import OrderedDict
 from urllib.parse import quote
 
@@ -24,6 +25,7 @@ musixmatch_token = None
 lyrics_lock = threading.RLock()
 http_session = requests.Session()
 lyrics_result_cache = OrderedDict()
+cider_request_pool = ThreadPoolExecutor(max_workers=4)
 
 LYRICS_CACHE_MAX_BYTES = int(os.getenv("LYRICS_CACHE_MAX_BYTES", str(32 * 1024 * 1024)))
 LYRICS_CACHE_MAX_ENTRIES = int(os.getenv("LYRICS_CACHE_MAX_ENTRIES", "512"))
@@ -513,15 +515,18 @@ def build_stats_payload():
 def dashboard_data():
     global current_track_id, cached_lyrics_payload
 
+    is_playing_future = cider_request_pool.submit(cider_get, "is-playing")
+    now_playing_future = cider_request_pool.submit(cider_get, "now-playing")
+
     try:
-        is_playing_req = cider_get("is-playing")
+        is_playing_req = is_playing_future.result()
         data_json = is_playing_req.json() if is_playing_req.status_code == 200 else {}
         is_playing = data_json.get("is_playing", False) if isinstance(data_json, dict) else False
     except requests.RequestException:
         is_playing = False
 
     try:
-        now_playing_req = cider_get("now-playing")
+        now_playing_req = now_playing_future.result()
         if now_playing_req.status_code != 200:
             return jsonify(build_stats_payload())
 
