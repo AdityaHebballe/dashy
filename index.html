@@ -745,7 +745,7 @@
                 currentTrackId = nextTrackId;
                 renderLyrics(data.lyrics, data.lyrics_synced);
                 if (hasSyncedLyrics && parsedLyrics.length > 0) {
-                    activeLyricIndex = 0;
+                    activeLyricIndex = -1;
                     applyLyricState(activeLyricIndex);
                     lyricsContainer.scrollTop = 0;
                 } else {
