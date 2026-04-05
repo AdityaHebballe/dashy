@@ -49,6 +49,12 @@
             transition: background-image 700ms ease;
         }
 
+        body.stats-active .bg-blur {
+            background-image: none !important;
+            filter: none;
+            transform: none;
+        }
+
         .app-shell {
             width: 100vw;
             height: 100vh;
@@ -79,20 +85,23 @@
 
         #music-view {
             display: flex;
+            align-items: stretch;
         }
 
         .left-panel {
-            width: 45%;
-            min-width: 380px;
+            width: min(45%, 720px);
+            min-width: 320px;
             padding: 28px 26px 22px;
             display: flex;
             flex-direction: column;
             justify-content: center;
             align-items: center;
+            gap: 0;
+            overflow: hidden;
         }
 
         .artwork-shell {
-            width: min(70vw, 750px);
+            width: min(100%, 36vw, 680px);
             aspect-ratio: 1;
             margin-bottom: 3vh;
         }
@@ -131,8 +140,8 @@
         }
 
         .progress-block {
-            width: 50%;
-            min-width: 280px;
+            width: min(100%, 440px);
+            min-width: 0;
             margin-top: 22px;
         }
 
@@ -205,7 +214,7 @@
             height: 100%;
             overflow-y: auto;
             scroll-behavior: auto;
-            padding: 50vh 72px 50vh 56px;
+            padding: 50vh clamp(20px, 5vw, 72px) 50vh clamp(18px, 4vw, 56px);
             scrollbar-width: none;
             display: flex;
             flex-direction: column;
@@ -256,8 +265,11 @@
         #stats-view {
             display: grid;
             grid-template-columns: repeat(2, minmax(0, 1fr));
+            grid-template-rows: repeat(2, minmax(0, 1fr));
             gap: 20px;
             padding: 24px;
+            align-content: center;
+            overflow: auto;
         }
 
         .stats-card {
@@ -269,6 +281,7 @@
             flex-direction: row;
             align-items: center;
             gap: 32px;
+            min-width: 0;
         }
 
         .stats-left {
@@ -290,6 +303,7 @@
             flex-direction: column;
             flex: 1;
             gap: 6px;
+            min-width: 0;
         }
 
         .stats-temp-right {
@@ -301,7 +315,7 @@
             font-weight: 700;
             font-variant-numeric: tabular-nums;
             letter-spacing: -0.04em;
-            min-width: 140px;
+            min-width: 120px;
         }
 
         .stats-temp-right svg {
@@ -373,15 +387,154 @@
             box-shadow: 0 0 10px rgba(255,255,255,0.2);
         }
 
-        @media (max-width: 1000px) {
+        @media (max-width: 1100px), (max-height: 760px) {
+            #music-view {
+                flex-direction: column;
+            }
+
             .left-panel {
-                width: 39%;
-                min-width: 280px;
+                width: 100%;
+                min-width: 0;
+                padding: 20px 20px 12px;
+                justify-content: flex-start;
+                flex-shrink: 0;
+            }
+
+            .artwork-shell {
+                width: min(48vw, 260px);
+                margin-bottom: 18px;
+            }
+
+            .track-meta {
+                margin-top: 0;
+            }
+
+            .progress-block {
+                width: min(100%, 520px);
+                margin-top: 18px;
+            }
+
+            .controls-row {
+                margin-top: 22px;
+            }
+
+            .right-panel {
+                min-height: 0;
             }
 
             #lyrics-container {
-                padding-right: 44px;
-                padding-left: 38px;
+                padding-top: 18vh;
+                padding-bottom: 22vh;
+            }
+        }
+
+        @media (max-width: 700px) {
+            #stats-view {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                grid-template-rows: repeat(2, minmax(0, 1fr));
+                padding: 14px;
+                gap: 14px;
+            }
+
+            .stats-card {
+                padding: 18px;
+                gap: 18px;
+                flex-wrap: wrap;
+            }
+
+            .stats-icon-big {
+                width: 52px;
+                height: 52px;
+            }
+
+            .stats-temp-right {
+                min-width: 0;
+                width: 100%;
+                justify-content: flex-start;
+                padding-left: 0;
+                font-size: 1.5rem;
+            }
+
+            .stats-value {
+                font-size: clamp(2.2rem, 10vw, 3.4rem);
+            }
+
+            .stats-label {
+                font-size: 0.88rem;
+                letter-spacing: 0.12em;
+            }
+
+            .left-panel {
+                padding-left: 14px;
+                padding-right: 14px;
+            }
+
+            .artwork-shell {
+                width: min(56vw, 220px);
+            }
+
+            #track-name {
+                font-size: clamp(1.25rem, 6vw, 1.8rem);
+            }
+
+            #artist-name {
+                font-size: clamp(0.9rem, 3.5vw, 1rem);
+            }
+
+            .control-btn {
+                width: 52px;
+                height: 52px;
+                border-radius: 16px;
+            }
+
+            #lyrics-container {
+                padding-left: 16px;
+                padding-right: 16px;
+                padding-top: 16vh;
+                padding-bottom: 20vh;
+            }
+
+            .lyric-line {
+                max-width: 100%;
+                font-size: clamp(1.05rem, 5vw, 1.35rem);
+                margin-bottom: 16px;
+            }
+        }
+
+        @media (max-height: 520px) and (orientation: landscape) {
+            .left-panel {
+                width: min(42%, 460px);
+                min-width: 260px;
+                padding: 14px 14px 10px;
+            }
+
+            .artwork-shell {
+                width: min(26vw, 180px);
+                margin-bottom: 12px;
+            }
+
+            .track-meta {
+                margin-top: 8px;
+            }
+
+            .progress-block {
+                margin-top: 12px;
+            }
+
+            .controls-row {
+                margin-top: 14px;
+                gap: 18px;
+            }
+
+            .control-btn {
+                width: 46px;
+                height: 46px;
+                font-size: 1.1rem;
+            }
+
+            #lyrics-container {
+                padding-top: 38vh;
+                padding-bottom: 38vh;
             }
         }
     </style>
@@ -502,12 +655,15 @@
         let dashboardFetchInFlight = false;
         let lastProgressPaintTime = 0;
         let lastTimeLabelText = '';
+        let lyricScrollAnimationId = null;
+        let lyricScrollTarget = 0;
 
         const STATS_POLL_INTERVAL_MS = 250;
         const MUSIC_POLL_INTERVAL_MS = 2500;
         const PLAYBACK_TICK_MS = 120;
         const IDLE_TICK_MS = 500;
         const PROGRESS_PAINT_INTERVAL_MS = 120;
+        const LYRIC_SCROLL_DURATION_MS = 800;
 
         const progressFill = document.getElementById('progress-fill');
         const currentTimeLabel = document.getElementById('current-time-label');
@@ -621,6 +777,7 @@
             const showMusic = mode === 'music';
             musicView.classList.toggle('hidden', !showMusic);
             statsView.classList.toggle('hidden', showMusic);
+            document.body.classList.toggle('stats-active', !showMusic);
         }
 
         function renderLyrics(lyricsText, isSynced) {
@@ -718,18 +875,42 @@
             const activeLine = parsedLyrics[activeIndex];
             if (!activeLine) return;
 
-            const targetTop = activeLine.element.offsetTop - (lyricsContainer.clientHeight / 2) + (activeLine.element.clientHeight / 2);
-            const nextTop = Math.max(0, targetTop);
-            const currentTop = lyricsContainer.scrollTop;
-            const distance = Math.abs(nextTop - currentTop);
-            if (distance < 24) return;
+            const targetTop = Math.max(
+                0,
+                activeLine.element.offsetTop - (lyricsContainer.clientHeight / 2) + (activeLine.element.clientHeight / 2)
+            );
+            const startTop = lyricsContainer.scrollTop;
+            const distance = targetTop - startTop;
 
-            const safeBand = lyricsContainer.clientHeight * 0.22;
-            const activeCenter = activeLine.element.offsetTop - currentTop + (activeLine.element.clientHeight / 2);
-            const viewportCenter = lyricsContainer.clientHeight / 2;
-            if (Math.abs(activeCenter - viewportCenter) < safeBand) return;
+            if (Math.abs(distance) < 2) {
+                lyricsContainer.scrollTop = targetTop;
+                lyricScrollTarget = targetTop;
+                return;
+            }
 
-            lyricsContainer.scrollTop = nextTop;
+            if (lyricScrollAnimationId) {
+                cancelAnimationFrame(lyricScrollAnimationId);
+                lyricScrollAnimationId = null;
+            }
+
+            lyricScrollTarget = targetTop;
+            const startTime = performance.now();
+
+            const step = (now) => {
+                const elapsed = now - startTime;
+                const progress = Math.min(1, elapsed / LYRIC_SCROLL_DURATION_MS);
+                const eased = 1 - Math.pow(1 - progress, 3);
+                lyricsContainer.scrollTop = startTop + (distance * eased);
+
+                if (progress < 1) {
+                    lyricScrollAnimationId = requestAnimationFrame(step);
+                } else {
+                    lyricsContainer.scrollTop = lyricScrollTarget;
+                    lyricScrollAnimationId = null;
+                }
+            };
+
+            lyricScrollAnimationId = requestAnimationFrame(step);
         }
 
         function syncLyrics(currentTime) {
@@ -844,13 +1025,24 @@
                 currentTrackId = nextTrackId;
                 currentLyricsKey = nextLyricsKey;
                 renderLyrics(data.lyrics, data.lyrics_synced);
+                if (lyricScrollAnimationId) {
+                    cancelAnimationFrame(lyricScrollAnimationId);
+                    lyricScrollAnimationId = null;
+                }
                 lyricsContainer.scrollTop = 0;
+                lyricScrollTarget = 0;
                 if (hasSyncedLyrics && parsedLyrics.length > 0) {
                     syncLyrics(localTime + 0.25);
                 }
             } else if (nextLyricsKey !== currentLyricsKey) {
                 currentLyricsKey = nextLyricsKey;
                 renderLyrics(data.lyrics, data.lyrics_synced);
+                if (lyricScrollAnimationId) {
+                    cancelAnimationFrame(lyricScrollAnimationId);
+                    lyricScrollAnimationId = null;
+                }
+                lyricsContainer.scrollTop = 0;
+                lyricScrollTarget = 0;
                 if (hasSyncedLyrics && parsedLyrics.length > 0) {
                     syncLyrics(localTime + 0.25);
                 }

@@ -49,9 +49,9 @@ stats_cache = {
 }
 
 STATS_INTERVALS = {
-    "cpu": 1.0,
-    "gpu": 1.0,
-    "disk": 1.0,
+    "cpu": 2.0,
+    "gpu": 2.0,
+    "disk": 2.0,
     "cpu_temp": 3.0,
     "gpu_temp": 3.0,
     "ram": 5.0,
