@@ -1,0 +1,272 @@
+Hostname and Port
+
+All API endpoints are accessible at http://localhost:10767.
+
+We've observed that using 127.0.0.1 when IPv4 is disabled tends to break and not connect. We recommend you do not turn off IPv4, but if you are required to do so, try using [::1]:10767.
+Authentication
+
+Unless explicitly disabled within Cider, all API requests require a valid API token. You can generate this token, or turn off authentication, from the menu at Settings -> Connectivity -> Manage External Application Access to Cider within Cider.
+
+The generated token should be passed in the apitoken header of all requests. Do not prefix the token with Bearer or any other string; just pass the token by itself in the header.
+
+This token is not required if disabled within the settings menu.
+/api/v1/playback
+
+The API endpoints documented below are all nested under /api/v1/playback.
+GET /active
+
+Responds with an empty body and status code 204: No Content. This endpoint can be used to quickly check that the RPC server is still active.
+204: No Content
+GET /is-playing
+
+Responds with a boolean value indicating whether music is currently playing.
+200: OK
+
+GET /now-playing
+
+Responds with an Apple Music API response for the currently playing song.
+200: OK
+
+{
+  "status": "ok",
+  "info": {
+    "albumName": "Skin",
+    "hasTimeSyncedLyrics": true,
+    "genreNames": [
+      "Electronic"
+    ],
+    "trackNumber": 14,
+    "durationInMillis": 193633,
+    "releaseDate": "2016-05-27T12:00:00Z",
+    "isVocalAttenuationAllowed": true,
+    "isMasteredForItunes": false,
+    "isrc": "AlligatorAUFF01600807",
+    "artwork": {
+      "width": 600,
+      "height": 600,
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/0e/d9/af/0ed9af7b-595d-6e9f-7b2e-c1113f4902f6/3555.jpg/640x640sr.jpg"
+    },
+    "audioLocale": "en-US",
+    "url": "https://music.apple.com/ca/album/like-water-feat-mndr/1719860281?i=1719861213",
+    "playParams": {
+      "id": "1719861213",
+      "kind": "song"
+    },
+    "discNumber": 1,
+    "hasLyrics": true,
+    "isAppleDigitalMaster": false,
+    "audioTraits": [
+      "atmos",
+      "lossless",
+      "lossy-stereo",
+      "spatial"
+    ],
+    "name": "Like Water (feat. MNDR)",
+    "previews": [
+      {
+        "url": "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview116/v4/33/68/51/336851f3-f985-9948-a4dc-579c57b1f326/mzaf_16966411213881300046.plus.aac.ep.m4a"
+      }
+    ],
+    "artistName": "Flume",
+    "currentPlaybackTime": 2.066576,
+    "remainingTime": 191.566424,
+    "inFavorites": false,
+    "inLibrary": false,
+    "shuffleMode": 0,
+    "repeatMode": 0
+  }
+}
+
+POST /play-url
+
+Triggers playback of an item.
+
+Accepts a url of the item to play. This URL can be found by right-clicking on an item and clicking on Share -> Apple Music in Cider, Share -> Copy Link in the official Apple Music app, or by copying the URL when viewing an item in the Apple Music web app.
+Request Body (`application/json`)
+
+200: OK
+
+POST /play-item-href
+
+Triggers playback of an item.
+
+Accepts an href (Apple Music API identifier).
+Request Body (`application/json`)
+
+200: OK
+
+POST /play-item
+
+Triggers playback of an item.
+
+Accepts a type of item to play and an id for the item. type should be one of the accepted types in the Apple Music API, such as songs. Note that the ID is required to be a string, not a number.
+Request Body (`application/json`)
+
+200: OK
+
+POST /play-later
+
+Adds an item to the end of the play queue (played after all other items currently in the queue).
+
+Accepts a type of item to play and an id for the item. type should be one of the accepted types in the Apple Music API, such as songs. Note that the ID is required to be a string, not a number.
+Request Body (`application/json`)
+
+200: OK
+
+POST /play-next
+
+Adds an item to the start of the play queue (played next, before all other items in the queue).
+
+Accepts a type of item to play and an id for the item. type should be one of the accepted types in the Apple Music API, such as songs. Note that the ID is required to be a string, not a number.
+Request Body (`application/json`)
+
+200: OK
+
+POST /play
+
+Resumes playback of the current item. If no item is playing, the behavior set under the menu Settings -> Play Button on Stopped Action in Cider will take effect.
+200: OK
+
+POST /pause
+
+Pauses the currently playing item. If no item is playing or if the item is already paused, this will do nothing.
+200: OK
+
+POST /playpause
+
+Toggles the play/pause state of the current item. This has the same behavior as calling /pause if the item is playing, and /play if the item is paused.
+200: OK
+
+POST /stop
+
+Stops the current playback and removes the current item. If items are in the queue, they will be kept.
+200: OK
+
+POST /next
+
+Moves to the next item in the queue, if any. Autoplay enable/disable status will be respected if the queue is empty (infinity button within the queue panel in Cider).
+
+If no item is currently playing but there is one in the queue, it will be started.
+200: OK
+
+POST /previous
+
+Moves to the previously played item, which is the item most recent in the playback history.
+
+If no item is currently playing but there is one in the playback history, it will be started.
+200: OK
+
+GET /queue
+
+Gets the current queue as a list of Apple Music response objects. Note that this also includes part of the history and the currently playing track.
+200: OK
+
+POST /queue
+
+Not currently functional.
+POST /queue/move-to-position
+
+Moves an item in the queue from the startIndex to the destinationIndex. Optionally returns the queue if passed returnQueue.
+
+Note that the index is 1-indexed (starts at 1, not 0). Also note that the queue contains some items that are from the history, so the items visible in the Up Next view in Cider may start at a number higher than 1.
+Request Body (`application/json`)
+
+200: OK
+
+POST /queue/remove-by-index
+
+Removes an item from the queue by its index
+
+Note that the index is 1-indexed (starts at 1, not 0). Also note that the queue contains some items that are from the history, so the items visible in the Up Next view in Cider may start at a number higher than 1.
+Request Body (`application/json`)
+
+POST /queue/clear-queue
+
+Clears the queue of all items.
+200: OK
+
+POST /seek
+
+Seeks to a given offset, in seconds, in the currently playing item.
+
+Accepts a position in seconds to seek to. Note that /now-playing returns a timestamp in milliseconds via the durationInMillis key, which should be divided by 1000 to get the duration in seconds.
+Request Body (`application/json`)
+
+204: No Content
+GET /volume
+
+Gets the current playback volume as a number between 0 (muted) and 1 (full volume).
+200: OK
+
+POST /volume
+
+Sets the current playback volume to a number between 0 (muted) and 1 (full volume).
+
+Accepts a volume as a number between 0 and 1.
+Request Body (`application/json`)
+
+200: OK
+
+POST /add-to-library
+
+Adds the currently playing item to the user's library. No effect if already in library.
+200: OK
+
+POST /set-rating
+
+Adds a rating to the currently playing item. Rating is -1 for dislike, 1 for like, and 0 for unset.
+
+Accepts a rating as a number between -1 and 1.
+Request Body (`application/json`)
+
+200: OK
+
+GET /repeat-mode
+
+Gets the current repeat mode as a number. 0 is off, 1 is "repeat this song", and 2 is "repeat".
+200: OK
+
+POST /toggle-repeat
+
+Toggles repeat between "repeat this song", "repeat", and "off".
+
+Note that this method doesn't take the mode to set, just changes to the next mode in the cycle repeat this song -> repeat -> off.
+200: OK
+
+GET /shuffle-mode
+
+Gets the current shuffle mode as a number. 0 is off and 1 is on.
+200: OK
+
+POST /toggle-shuffle
+
+Toggles shuffle between "off" and "on".
+200: OK
+
+GET /autoplay
+
+Gets the current autoplay status as a boolean. true is on and false is off.
+200: OK
+
+POST /toggle-autoplay
+
+Toggles autoplay between "off" and "on".
+200: OK
+
+/api/v1/amapi
+
+The API endpoints documented below are all nested under /api/v1/amapi. These API endpoints are generally for more advanced use-cases than the above endpoints, and pass through the raw Apple Music API responses directly with no translation.
+POST /run-v3
+
+Makes a request to the given path on the Apple Music API and returns the response.
+Request Body (`application/json`)
+
+200: OK
+
+/api/v1/lyrics
+
+The API endpoint documented below is nested under /api/v1/lyrics.
+GET /:id
+
+Gets lyrics for the given song ID. Currently non-functional but on track to be fixed soon.
+200: OK

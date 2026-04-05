@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Cider Phone Dashboard</title>
+    <style>
+        :root {
+            --bg-color: #070b10;
+            --panel-color: rgba(9, 15, 23, 0.76);
+            --panel-border: rgba(255, 255, 255, 0.08);
+            --text-1: #f5f7fb;
+            --text-2: rgba(245, 247, 251, 0.68);
+            --text-3: rgba(245, 247, 251, 0.28);
+            --glow: rgba(255, 255, 255, 0.18);
+            --shadow: rgba(0, 0, 0, 0.35);
+        }
+
+        * {
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        html, body {
+            margin: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-1);
+            font-family: "SF Pro Display", "Segoe UI", "Helvetica Neue", sans-serif;
+            transition: background-color 700ms ease, color 400ms ease;
+        }
+
+        .bg-blur {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background-size: cover;
+            background-position: center;
+            filter: blur(80px) saturate(1.8) brightness(0.6);
+            transform: scale(1.15);
+            z-index: -1;
+            transition: background-image 700ms ease;
+        }
+
+        .app-shell {
+            width: 100vw;
+            height: 100vh;
+            padding: 0;
+        }
+
+        .dashboard-frame {
+            width: 100%;
+            height: 100%;
+            border-radius: 0;
+            border: none;
+            background: transparent;
+            backdrop-filter: none;
+            box-shadow: none;
+            overflow: hidden;
+        }
+
+        #music-view,
+        #stats-view {
+            width: 100%;
+            height: 100%;
+        }
+
+        #music-view.hidden,
+        #stats-view.hidden {
+            display: none;
+        }
+
+        #music-view {
+            display: flex;
+        }
+
+        .left-panel {
+            width: 45%;
+            min-width: 380px;
+            padding: 28px 26px 22px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .artwork-shell {
+            width: min(70vw, 750px);
+            aspect-ratio: 1;
+            margin-bottom: 3vh;
+        }
+
+        #album-art {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border-radius: 28px;
+            box-shadow: 0 32px 64px rgba(0, 0, 0, 0.5);
+            display: block;
+            background: rgba(255, 255, 255, 0.04);
+            transition: padding 300ms ease;
+            box-sizing: border-box;
+        }
+
+        .track-meta {
+            width: 100%;
+            margin-top: 22px;
+            text-align: center;
+        }
+
+        #track-name {
+            margin: 0;
+            font-size: clamp(1.6rem, 2.4vw, 2.3rem);
+            line-height: 1.02;
+            letter-spacing: -0.05em;
+            font-weight: 740;
+        }
+
+        #artist-name {
+            margin: 10px 0 0;
+            color: var(--text-2);
+            font-size: clamp(0.95rem, 1.3vw, 1.1rem);
+            font-weight: 500;
+        }
+
+        .progress-block {
+            width: 50%;
+            min-width: 280px;
+            margin-top: 22px;
+        }
+
+        .progress-track {
+            width: 100%;
+            height: 8px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.14);
+            overflow: hidden;
+        }
+
+        #progress-fill {
+            height: 100%;
+            width: 0%;
+            border-radius: inherit;
+            background: linear-gradient(90deg, rgba(255,255,255,0.78), rgba(255,255,255,1));
+            box-shadow: 0 0 18px var(--glow);
+            transition: width 700ms linear;
+        }
+
+        .time-row {
+            margin-top: 10px;
+            display: flex;
+            justify-content: space-between;
+            color: var(--text-2);
+            font-size: 0.82rem;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .controls-row {
+            margin-top: 36px;
+            display: flex;
+            gap: 28px;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .control-btn {
+            width: 60px;
+            height: 60px;
+            border: 0;
+            border-radius: 18px;
+            display: grid;
+            place-items: center;
+            color: var(--text-1);
+            background: transparent;
+            font-size: 1.4rem;
+            transition: transform 180ms ease, opacity 180ms ease, color 180ms ease;
+        }
+
+        .control-btn:active {
+            transform: scale(0.95);
+        }
+
+        .right-panel {
+            position: relative;
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            padding: 0;
+        }
+
+
+
+        #lyrics-container {
+            position: relative;
+            z-index: 1;
+            height: 100%;
+            overflow-y: auto;
+            scroll-behavior: auto;
+            padding: 50vh 72px 50vh 56px;
+            scrollbar-width: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+        }
+
+        #lyrics-container::-webkit-scrollbar {
+            display: none;
+        }
+
+        .lyric-line {
+            margin: 0 0 20px;
+            font-size: clamp(1.25rem, 2.2vw, 1.95rem);
+            line-height: 1.16;
+            letter-spacing: -0.04em;
+            font-weight: 680;
+            color: var(--text-3);
+            opacity: 0.26;
+            transform: translateX(0) scale(1);
+            transition:
+                color 260ms ease,
+                opacity 260ms ease,
+                transform 360ms ease;
+            will-change: transform, opacity, color;
+            text-align: center;
+            max-width: 34rem;
+            width: 100%;
+            align-self: center;
+        }
+
+        .lyric-line.previous {
+            color: var(--text-1);
+            opacity: 0.65;
+            text-shadow: 0 0 10px rgba(255, 255, 255, 0.05);
+        }
+
+        .lyric-line.active {
+            color: var(--text-1);
+            opacity: 1;
+            transform: scale(1.03);
+            text-shadow: 0 0 26px rgba(255, 255, 255, 0.1);
+        }
+
+        .lyric-line.unsynced,
+        .lyric-line.unsynced.active {
+            transform: none;
+        }
+
+        #stats-view {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 20px;
+            padding: 24px;
+        }
+
+        .stats-card {
+            padding: 24px 28px;
+            border-radius: 28px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.04));
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            gap: 32px;
+        }
+
+        .stats-left {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-shrink: 0;
+        }
+
+        .stats-icon-big {
+            width: 68px;
+            height: 68px;
+            color: rgba(255, 255, 255, 0.95);
+            filter: drop-shadow(0 6px 16px rgba(255,255,255,0.15));
+        }
+
+        .stats-right {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            gap: 6px;
+        }
+
+        .stats-temp-right {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            padding-left: 20px;
+            font-size: 2.5rem;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+            letter-spacing: -0.04em;
+            min-width: 140px;
+        }
+
+        .stats-temp-right svg {
+            width: 32px;
+            height: 32px;
+            margin-right: 8px;
+            opacity: 0.8;
+        }
+
+        .stats-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .stats-label {
+            color: var(--text-2);
+            font-size: 1.1rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.16em;
+        }
+
+        .stats-temp-box {
+            display: flex;
+            align-items: center;
+            font-size: 1.1rem;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+            background: rgba(0,0,0,0.2);
+            padding: 6px 12px;
+            border-radius: 99px;
+            gap: 6px;
+        }
+
+        .temp-icon {
+            width: 18px;
+            height: 18px;
+        }
+
+        .temp-cool { color: #4caf50; }
+        .temp-warm { color: #ffeb3b; }
+        .temp-hot { color: #ff9800; }
+        .temp-crit { color: #f44336; }
+        .temp-none { color: var(--text-3); background: transparent; padding: 0; }
+
+        .stats-value {
+            font-size: clamp(3rem, 6vw, 4.5rem);
+            font-weight: 760;
+            letter-spacing: -0.06em;
+            line-height: 1;
+        }
+
+        .stats-bar {
+            height: 14px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.12);
+            overflow: hidden;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.2);
+        }
+
+        .stats-bar-fill {
+            height: 100%;
+            width: 0%;
+            border-radius: inherit;
+            background: linear-gradient(90deg, rgba(255,255,255,0.4), rgba(255,255,255,1));
+            transition: width 400ms ease;
+            box-shadow: 0 0 10px rgba(255,255,255,0.2);
+        }
+
+        @media (max-width: 1000px) {
+            .left-panel {
+                width: 39%;
+                min-width: 280px;
+            }
+
+            #lyrics-container {
+                padding-right: 44px;
+                padding-left: 38px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-blur" id="bg-blur"></div>
+    <div class="app-shell">
+        <div class="dashboard-frame">
+            <section id="music-view" class="hidden">
+                <div class="left-panel">
+                    <div class="artwork-shell">
+                        <img id="album-art" src="" alt="Album art">
+                    </div>
+
+                    <div class="track-meta">
+                        <h1 id="track-name">Waiting for Cider</h1>
+                        <p id="artist-name">No active song</p>
+                    </div>
+
+                    <div class="progress-block">
+                        <div class="progress-track">
+                            <div id="progress-fill"></div>
+                        </div>
+                        <div class="time-row">
+                            <span id="current-time-label">0:00</span>
+                            <span id="duration-label">0:00</span>
+                        </div>
+                    </div>
+
+                    <div class="controls-row">
+                        <button class="control-btn" id="prev-btn" aria-label="Previous track">⏮</button>
+                        <button class="control-btn" id="playpause-btn" aria-label="Play or pause">▶</button>
+                        <button class="control-btn" id="next-btn" aria-label="Next track">⏭</button>
+                    </div>
+                </div>
+
+                <div class="right-panel">
+
+                    <div id="lyrics-container"></div>
+                </div>
+            </section>
+
+            <section id="stats-view">
+                <div class="stats-card">
+                    <div class="stats-left">
+                        <svg class="stats-icon-big" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line></svg>
+                    </div>
+                    <div class="stats-right">
+                        <div class="stats-top">
+                            <div class="stats-label">CPU</div>
+                        </div>
+                        <div class="stats-value" id="cpu-stat">0%</div>
+                        <div class="stats-bar"><div class="stats-bar-fill" id="cpu-bar"></div></div>
+                    </div>
+                    <div class="stats-temp-right temp-none" id="cpu-temp-box">
+                        <span id="cpu-temp-stat">--</span>
+                    </div>
+                </div>
+                <div class="stats-card">
+                    <div class="stats-left">
+                        <svg class="stats-icon-big" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
+                    </div>
+                    <div class="stats-right">
+                        <div class="stats-top">
+                            <div class="stats-label">GPU</div>
+                        </div>
+                        <div class="stats-value" id="gpu-stat">0%</div>
+                        <div class="stats-bar"><div class="stats-bar-fill" id="gpu-bar"></div></div>
+                    </div>
+                    <div class="stats-temp-right temp-none" id="gpu-temp-box">
+                        <span id="gpu-temp-stat">--</span>
+                    </div>
+                </div>
+                <div class="stats-card">
+                    <div class="stats-left">
+                        <svg class="stats-icon-big" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="10" rx="2" ry="2"></rect><path d="M6 7V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2"></path><path d="M6 17v2a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-2"></path><path d="M12 11v2"></path></svg>
+                    </div>
+                    <div class="stats-right">
+                        <div class="stats-top">
+                            <div class="stats-label">RAM</div>
+                        </div>
+                        <div class="stats-value" id="ram-stat">0%</div>
+                        <div class="stats-bar"><div class="stats-bar-fill" id="ram-bar"></div></div>
+                    </div>
+                </div>
+                <div class="stats-card">
+                    <div class="stats-left">
+                        <svg class="stats-icon-big" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
+                    </div>
+                    <div class="stats-right">
+                        <div class="stats-top">
+                            <div class="stats-label">Disk IO</div>
+                        </div>
+                        <div class="stats-value" id="disk-stat">0 MB/s</div>
+                        <div class="stats-bar"><div class="stats-bar-fill" id="disk-bar"></div></div>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'http://192.168.0.9:5000/api/dashboard';
+        const CONTROL_URL = 'http://192.168.0.9:5000/api/control';
+
+        let currentTrackId = '';
+        let parsedLyrics = [];
+        let hasSyncedLyrics = false;
+        let activeLyricIndex = -1;
+        let isTransitioning = false;
+        let playbackIsPlaying = false;
+        let currentDuration = 0;
+        let localTime = 0;
+        let lastUpdateTime = Date.now();
+        let interpolationInterval = null;
+
+        function startInterpolation() {
+            if (interpolationInterval) clearInterval(interpolationInterval);
+            interpolationInterval = setInterval(() => {
+                if (playbackIsPlaying && currentDuration > 0) {
+                    const elapsed = (Date.now() - lastUpdateTime) / 1000;
+                    localTime += elapsed;
+                    lastUpdateTime = Date.now();
+                    const clampTime = Math.min(localTime, currentDuration);
+                    syncLyrics(clampTime + 0.25);
+                    const progressPct = (clampTime / currentDuration) * 100;
+                    document.getElementById('progress-fill').style.width = `${progressPct}%`;
+                    document.getElementById('current-time-label').textContent = formatTime(clampTime);
+                }
+            }, 64);
+        }
+
+        const musicView = document.getElementById('music-view');
+        const statsView = document.getElementById('stats-view');
+        const lyricsContainer = document.getElementById('lyrics-container');
+        const playPauseBtn = document.getElementById('playpause-btn');
+        const prevBtn = document.getElementById('prev-btn');
+        const nextBtn = document.getElementById('next-btn');
+
+        function formatTime(seconds) {
+            if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            return `${mins}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        function formatTemp(value) {
+            return Number.isFinite(value) ? `${value.toFixed(1)}°C` : '--';
+        }
+
+        function getTempClass(value) {
+            if (!Number.isFinite(value)) return 'temp-none';
+            if (value < 55) return 'temp-cool';
+            if (value < 75) return 'temp-warm';
+            if (value < 88) return 'temp-hot';
+            return 'temp-crit';
+        }
+
+        function updateTempBox(idBox, idStat, value) {
+            const box = document.getElementById(idBox);
+            const stat = document.getElementById(idStat);
+            box.className = 'stats-temp-right ' + getTempClass(value);
+            if (Number.isFinite(value)) {
+                stat.innerHTML = `<svg class="temp-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"></path></svg> ${value.toFixed(1)}°C`;
+            } else {
+                stat.textContent = '--';
+            }
+        }
+
+        function clampPercent(value) {
+            const numeric = Number(value) || 0;
+            return Math.max(0, Math.min(100, numeric));
+        }
+
+        let currentArtworkColors = '';
+
+        function setTheme(artwork) {
+            if (!artwork) return;
+            const newColors = `${artwork.bgColor}|${artwork.textColor1}`;
+            if (currentArtworkColors === newColors) return;
+            currentArtworkColors = newColors;
+
+            document.documentElement.style.setProperty('--bg-color', `#${artwork.bgColor || '070b10'}`);
+            document.documentElement.style.setProperty('--text-1', `#${artwork.textColor1 || 'f5f7fb'}`);
+            document.documentElement.style.setProperty('--text-2', `#${artwork.textColor2 || 'b8c4d2'}`);
+            document.documentElement.style.setProperty('--text-3', `#${artwork.textColor4 || artwork.textColor3 || '7a8794'}`);
+            document.documentElement.style.setProperty('--panel-color', `#${artwork.bgColor || '070b10'}a8`);
+            document.documentElement.style.setProperty('--glow', `#${artwork.textColor1 || 'ffffff'}33`);
+        }
+
+        function showView(mode) {
+            const showMusic = mode === 'music';
+            musicView.classList.toggle('hidden', !showMusic);
+            statsView.classList.toggle('hidden', showMusic);
+        }
+
+        function renderLyrics(lyricsText, isSynced) {
+            lyricsContainer.innerHTML = '';
+            parsedLyrics = [];
+            hasSyncedLyrics = Boolean(isSynced);
+            activeLyricIndex = -1;
+
+            if (!lyricsText) {
+                const emptyLine = document.createElement('div');
+                emptyLine.className = 'lyric-line active unsynced';
+                emptyLine.textContent = 'No lyrics found for this track';
+                lyricsContainer.appendChild(emptyLine);
+                return;
+            }
+
+            if (hasSyncedLyrics) {
+                const regex = /\[(\d{2}):(\d{2}(?:\.\d{2,3})?)\](.*)/;
+                lyricsText.split('\n').forEach((rawLine) => {
+                    const match = rawLine.match(regex);
+                    if (!match) return;
+
+                    const minutes = Number.parseInt(match[1], 10);
+                    const seconds = Number.parseFloat(match[2]);
+                    const text = match[3].trim();
+                    if (!text) return;
+
+                    const element = document.createElement('div');
+                    element.className = 'lyric-line';
+                    element.textContent = text;
+                    lyricsContainer.appendChild(element);
+
+                    parsedLyrics.push({
+                        time: (minutes * 60) + seconds,
+                        element
+                    });
+                });
+            } else {
+                lyricsText
+                    .split('\n')
+                    .map((line) => line.trim())
+                    .filter(Boolean)
+                    .forEach((line, index) => {
+                        const element = document.createElement('div');
+                        element.className = `lyric-line unsynced${index === 0 ? ' active' : ''}`;
+                        element.textContent = line;
+                        lyricsContainer.appendChild(element);
+                    });
+            }
+        }
+
+        function applyLyricState(activeIndex) {
+            parsedLyrics.forEach((line, index) => {
+                line.element.classList.remove('previous', 'active');
+                if (index < activeIndex) {
+                    line.element.classList.add('previous');
+                } else if (index === activeIndex) {
+                    line.element.classList.add('active');
+                }
+            });
+        }
+
+        function scrollLyricsToActive(activeIndex) {
+            const activeLine = parsedLyrics[activeIndex];
+            if (!activeLine) return;
+
+            const targetTop = activeLine.element.offsetTop - (lyricsContainer.clientHeight / 2) + (activeLine.element.clientHeight / 2);
+            lyricsContainer.scrollTo({
+                top: Math.max(0, targetTop),
+                behavior: 'smooth'
+            });
+        }
+
+        function syncLyrics(currentTime) {
+            if (!hasSyncedLyrics || parsedLyrics.length === 0) return;
+
+            let nextActiveIndex = -1;
+            for (let i = 0; i < parsedLyrics.length; i += 1) {
+                if (currentTime >= parsedLyrics[i].time) {
+                    nextActiveIndex = i;
+                } else {
+                    break;
+                }
+            }
+
+            if (nextActiveIndex === -1 || nextActiveIndex === activeLyricIndex) return;
+
+            activeLyricIndex = nextActiveIndex;
+            applyLyricState(activeLyricIndex);
+            scrollLyricsToActive(activeLyricIndex);
+        }
+
+        function updateStatsUI(data) {
+            showView('stats');
+
+            const cpu = clampPercent(data.cpu);
+            const gpu = clampPercent(data.gpu);
+            const ram = clampPercent(data.ram);
+            const disk = Number(data.disk) || 0;
+
+            document.getElementById('cpu-stat').textContent = `${Math.round(cpu)}%`;
+            document.getElementById('gpu-stat').textContent = `${Math.round(gpu)}%`;
+            document.getElementById('ram-stat').textContent = `${Math.round(ram)}%`;
+            document.getElementById('disk-stat').textContent = `${disk.toFixed(1)} MB/s`;
+
+            const diskPct = Math.min(100, (disk / 500) * 100);
+            
+            document.getElementById('cpu-bar').style.width = `${cpu}%`;
+            document.getElementById('gpu-bar').style.width = `${gpu}%`;
+            document.getElementById('ram-bar').style.width = `${ram}%`;
+            document.getElementById('disk-bar').style.width = `${diskPct}%`;
+
+            updateTempBox('cpu-temp-box', 'cpu-temp-stat', data.cpu_temp);
+            updateTempBox('gpu-temp-box', 'gpu-temp-stat', data.gpu_temp);
+        }
+
+        function updatePlayPauseButton(isPlaying) {
+            playbackIsPlaying = Boolean(isPlaying);
+            playPauseBtn.textContent = playbackIsPlaying ? '❚❚' : '▶';
+            playPauseBtn.setAttribute('aria-label', playbackIsPlaying ? 'Pause playback' : 'Resume playback');
+        }
+
+        function updateMusicUI(data) {
+            showView('music');
+            setTheme(data.artwork);
+
+            const displayTrack = data.track || 'Unknown track';
+            const displayArtist = data.artist || 'Unknown artist';
+            
+            if (document.getElementById('track-name').textContent !== displayTrack) {
+                document.getElementById('track-name').textContent = displayTrack;
+            }
+            if (document.getElementById('artist-name').textContent !== displayArtist) {
+                document.getElementById('artist-name').textContent = displayArtist;
+            }
+            
+            let rawUrl = data.artwork?.url || (typeof data.artwork === 'string' ? data.artwork : '');
+            if (rawUrl) {
+                rawUrl = rawUrl.replace(/\/(?:\{w\}x\{h\}|\d+x\d+)[a-zA-Z]*\.(png|jpg|jpeg)$/i, '/800x800bb.jpg');
+                rawUrl = rawUrl.replace('{w}', '800').replace('{h}', '800');
+            }
+            
+            const placeholderSvg = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJyZ2JhKDI1NSwyNTUsMjU1LDAuMSkiIHN0cm9rZS13aWR0aD0iMSI+PHBhdGggZD0iTTkgMThWNWwxMi0ydjEzIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz48Y2lyY2xlIGN4PSI2IiBjeT0iMTgiIHI9IjMiLz48Y2lyY2xlIGN4PSIxOCIgY3k9IjE2IiByPSIzIi8+PC9zdmc+';
+            const albumArtElem = document.getElementById('album-art');
+            const targetSrc = rawUrl || placeholderSvg;
+            
+            if (albumArtElem.getAttribute('src') !== targetSrc) {
+                albumArtElem.style.padding = rawUrl ? '0' : '15%';
+                albumArtElem.setAttribute('src', targetSrc);
+            }
+            
+            const blurElem = document.getElementById('bg-blur');
+            const targetBg = rawUrl ? `url("${rawUrl}")` : 'none';
+            if (!blurElem.style.backgroundImage.includes(rawUrl) || rawUrl === '') {
+                blurElem.style.backgroundImage = targetBg;
+            }
+
+            currentDuration = (data.duration || 0) / 1000;
+            localTime = data.current_time || 0;
+            lastUpdateTime = Date.now();
+            playbackIsPlaying = Boolean(data.is_playing);
+
+            document.getElementById('duration-label').textContent = formatTime(currentDuration);
+            updatePlayPauseButton(playbackIsPlaying);
+
+            const nextTrackId = `${data.track || ''}::${data.artist || ''}::${data.duration || ''}::${data.lyrics || ''}`;
+            if (nextTrackId !== currentTrackId) {
+                currentTrackId = nextTrackId;
+                renderLyrics(data.lyrics, data.lyrics_synced);
+                if (hasSyncedLyrics && parsedLyrics.length > 0) {
+                    activeLyricIndex = 0;
+                    applyLyricState(activeLyricIndex);
+                    lyricsContainer.scrollTop = 0;
+                } else {
+                    lyricsContainer.scrollTop = 0;
+                }
+            }
+        }
+
+        async function sendControl(action) {
+            if (isTransitioning) return;
+            isTransitioning = true;
+
+            try {
+                await fetch(`${CONTROL_URL}/${action}`, { method: 'POST' });
+                setTimeout(fetchDashboard, 180);
+            } catch (error) {
+                console.error('Control request failed', error);
+            } finally {
+                setTimeout(() => {
+                    isTransitioning = false;
+                }, 220);
+            }
+        }
+
+        async function fetchDashboard() {
+            try {
+                const response = await fetch(API_URL);
+                const data = await response.json();
+
+                updateStatsUI(data);
+                updatePlayPauseButton(Boolean(data.is_playing));
+
+                if (data.has_active_track) {
+                    updateMusicUI(data);
+                } else {
+                    showView('stats');
+                }
+            } catch (error) {
+                console.error('Dashboard offline or unreachable', error);
+            } finally {
+                setTimeout(fetchDashboard, 2500);
+            }
+        }
+
+        prevBtn.addEventListener('click', () => sendControl('previous'));
+        nextBtn.addEventListener('click', () => sendControl('next'));
+        playPauseBtn.addEventListener('click', () => sendControl('playpause'));
+
+        startInterpolation();
+        fetchDashboard();
+    </script>
+</body>
+</html>
