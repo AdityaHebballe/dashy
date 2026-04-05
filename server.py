@@ -2,6 +2,7 @@ import os
 import re
 import time
 import threading
+from collections import OrderedDict
 from urllib.parse import quote
 
 import psutil
@@ -20,8 +21,14 @@ MUSIXMATCH_BASE = "https://apic-desktop.musixmatch.com/ws/1.1/"
 current_track_id = None
 cached_lyrics_payload = {"text": None, "is_synced": False, "source": None}
 musixmatch_token = None
-lyrics_lock = threading.Lock()
+lyrics_lock = threading.RLock()
 http_session = requests.Session()
+lyrics_result_cache = OrderedDict()
+
+LYRICS_CACHE_MAX_BYTES = int(os.getenv("LYRICS_CACHE_MAX_BYTES", str(32 * 1024 * 1024)))
+LYRICS_CACHE_MAX_ENTRIES = int(os.getenv("LYRICS_CACHE_MAX_ENTRIES", "512"))
+LYRICS_CACHE_TTL_SECONDS = int(os.getenv("LYRICS_CACHE_TTL_SECONDS", str(7 * 24 * 60 * 60)))
+lyrics_cache_bytes = 0
 
 # Init non-blocking CPU check
 psutil.cpu_percent(interval=None)
@@ -32,6 +39,66 @@ try:
 except Exception:
     last_disk_bytes = 0
 last_disk_time = time.time()
+
+
+def estimate_lyrics_payload_size(track_id, payload):
+    text = payload.get("text") or ""
+    source = payload.get("source") or ""
+    return len(track_id.encode("utf-8")) + len(text.encode("utf-8")) + len(source.encode("utf-8")) + 64
+
+
+def get_cached_lyrics(track_id):
+    global lyrics_cache_bytes
+
+    with lyrics_lock:
+        cached = lyrics_result_cache.get(track_id)
+        if not cached:
+            return None
+
+        expires_at = cached["expires_at"]
+        if expires_at < time.time():
+            lyrics_cache_bytes -= cached["size"]
+            lyrics_result_cache.pop(track_id, None)
+            return None
+
+        lyrics_result_cache.move_to_end(track_id)
+        return dict(cached["payload"])
+
+
+def store_cached_lyrics(track_id, payload):
+    global lyrics_cache_bytes
+
+    payload_copy = {
+        "text": payload.get("text"),
+        "is_synced": bool(payload.get("is_synced", False)),
+        "source": payload.get("source"),
+    }
+    entry_size = estimate_lyrics_payload_size(track_id, payload_copy)
+
+    # Do not allow one oversized payload to evict the entire cache.
+    if entry_size > LYRICS_CACHE_MAX_BYTES:
+        return payload_copy
+
+    with lyrics_lock:
+        existing = lyrics_result_cache.pop(track_id, None)
+        if existing:
+            lyrics_cache_bytes -= existing["size"]
+
+        lyrics_result_cache[track_id] = {
+            "payload": payload_copy,
+            "expires_at": time.time() + LYRICS_CACHE_TTL_SECONDS,
+            "size": entry_size,
+        }
+        lyrics_cache_bytes += entry_size
+
+        while lyrics_result_cache and (
+            lyrics_cache_bytes > LYRICS_CACHE_MAX_BYTES or
+            len(lyrics_result_cache) > LYRICS_CACHE_MAX_ENTRIES
+        ):
+            _, removed = lyrics_result_cache.popitem(last=False)
+            lyrics_cache_bytes -= removed["size"]
+
+    return payload_copy
 
 
 def get_amd_gpu_stats():
@@ -366,6 +433,7 @@ def update_lyrics_background(artist, track, album, duration, job_track_id):
             return
 
     payload = fetch_best_lyrics(artist, track, album, duration)
+    payload = store_cached_lyrics(job_track_id, payload)
 
     with lyrics_lock:
         if job_track_id == current_track_id:
@@ -469,7 +537,11 @@ def dashboard_data():
             if track_id != current_track_id:
                 current_track_id = track_id
                 cached_lyrics_payload = {"text": "", "is_synced": False, "source": None}
-                should_start_lyrics_job = True
+                cached_payload = get_cached_lyrics(track_id)
+                if cached_payload is not None:
+                    cached_lyrics_payload = cached_payload
+                else:
+                    should_start_lyrics_job = True
 
         if should_start_lyrics_job:
             t = threading.Thread(target=update_lyrics_background, args=(
@@ -482,7 +554,6 @@ def dashboard_data():
             t.daemon = True
             t.start()
 
-        payload_stats = build_stats_payload()
         with lyrics_lock:
             lyrics_payload = dict(cached_lyrics_payload)
 
@@ -499,12 +570,6 @@ def dashboard_data():
             "lyrics": lyrics_payload.get("text"),
             "lyrics_synced": lyrics_payload.get("is_synced", False),
             "lyrics_source": lyrics_payload.get("source"),
-            "cpu": payload_stats["cpu"],
-            "ram": payload_stats["ram"],
-            "gpu": payload_stats["gpu"],
-            "cpu_temp": payload_stats["cpu_temp"],
-            "gpu_temp": payload_stats["gpu_temp"],
-            "disk": payload_stats["disk"],
         }
         return jsonify(payload)
     except requests.RequestException:

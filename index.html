@@ -496,9 +496,14 @@
         let currentDuration = 0;
         let localTime = 0;
         let lastUpdateTime = Date.now();
-        let interpolationInterval = null;
+        let playbackAnimationId = null;
         let dashboardPollTimeout = null;
         let dashboardFetchInFlight = false;
+        let lastProgressPaintTime = 0;
+
+        const STATS_POLL_INTERVAL_MS = 800;
+        const MUSIC_POLL_INTERVAL_MS = 2500;
+        const PROGRESS_PAINT_INTERVAL_MS = 100;
 
         const progressFill = document.getElementById('progress-fill');
         const currentTimeLabel = document.getElementById('current-time-label');
@@ -517,19 +522,32 @@
         const diskBarElem = document.getElementById('disk-bar');
 
         function startInterpolation() {
-            if (interpolationInterval) clearInterval(interpolationInterval);
-            interpolationInterval = setInterval(() => {
+            if (playbackAnimationId) cancelAnimationFrame(playbackAnimationId);
+
+            const tick = (now) => {
                 if (playbackIsPlaying && currentDuration > 0) {
-                    const elapsed = (Date.now() - lastUpdateTime) / 1000;
+                    const currentTimestamp = Date.now();
+                    const elapsed = (currentTimestamp - lastUpdateTime) / 1000;
                     localTime += elapsed;
-                    lastUpdateTime = Date.now();
+                    lastUpdateTime = currentTimestamp;
+
                     const clampTime = Math.min(localTime, currentDuration);
                     syncLyrics(clampTime + 0.25);
-                    const progressPct = (clampTime / currentDuration) * 100;
-                    progressFill.style.width = `${progressPct}%`;
-                    currentTimeLabel.textContent = formatTime(clampTime);
+
+                    if ((now - lastProgressPaintTime) >= PROGRESS_PAINT_INTERVAL_MS) {
+                        const progressPct = (clampTime / currentDuration) * 100;
+                        progressFill.style.width = `${progressPct}%`;
+                        currentTimeLabel.textContent = formatTime(clampTime);
+                        lastProgressPaintTime = now;
+                    }
+                } else {
+                    lastUpdateTime = Date.now();
                 }
-            }, 64);
+
+                playbackAnimationId = requestAnimationFrame(tick);
+            };
+
+            playbackAnimationId = requestAnimationFrame(tick);
         }
 
         const musicView = document.getElementById('music-view');
@@ -793,6 +811,7 @@
             currentDuration = (data.duration || 0) / 1000;
             localTime = data.current_time || 0;
             lastUpdateTime = Date.now();
+            lastProgressPaintTime = 0;
             playbackIsPlaying = Boolean(data.is_playing);
 
             durationLabel.textContent = formatTime(currentDuration);
@@ -847,8 +866,7 @@
                 const response = await fetch(API_URL);
                 const data = await response.json();
 
-                if (data.has_active_track) {
-                    updateStatsUI(data);
+                if (data.mode === 'music' && data.has_active_track) {
                     updateMusicUI(data);
                 } else {
                     updateStatsUI(data);
@@ -858,7 +876,10 @@
                 console.error('Dashboard offline or unreachable', error);
             } finally {
                 dashboardFetchInFlight = false;
-                dashboardPollTimeout = setTimeout(fetchDashboard, 2500);
+                const nextPollDelay = musicView.classList.contains('hidden')
+                    ? STATS_POLL_INTERVAL_MS
+                    : MUSIC_POLL_INTERVAL_MS;
+                dashboardPollTimeout = setTimeout(fetchDashboard, nextPollDelay);
             }
         }
 
