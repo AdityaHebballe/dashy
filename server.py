@@ -39,6 +39,23 @@ LYRICS_DISK_CACHE_CLEANUP_INTERVAL_SECONDS = int(os.getenv("DASHY_LYRICS_DISK_CA
 LYRICS_CACHE_SCHEMA_VERSION = 1
 lyrics_cache_bytes = 0
 next_disk_cache_cleanup_at = 0
+stats_cache = {
+    "cpu": {"value": 0.0, "updated_at": 0.0},
+    "gpu": {"value": 0.0, "updated_at": 0.0},
+    "disk": {"value": 0.0, "updated_at": 0.0},
+    "cpu_temp": {"value": None, "updated_at": 0.0},
+    "gpu_temp": {"value": None, "updated_at": 0.0},
+    "ram": {"value": 0.0, "updated_at": 0.0},
+}
+
+STATS_INTERVALS = {
+    "cpu": 1.0,
+    "gpu": 1.0,
+    "disk": 1.0,
+    "cpu_temp": 3.0,
+    "gpu_temp": 3.0,
+    "ram": 5.0,
+}
 
 # Init non-blocking CPU check
 psutil.cpu_percent(interval=None)
@@ -256,6 +273,21 @@ def store_cached_lyrics(track_id, payload):
     payload_copy = store_memory_cached_lyrics(track_id, payload)
     store_disk_cached_lyrics(track_id, payload_copy)
     return payload_copy
+
+
+def get_cached_stat(stat_name, getter, now):
+    with lyrics_lock:
+        cached = stats_cache[stat_name]
+        if (now - cached["updated_at"]) < STATS_INTERVALS[stat_name]:
+            return cached["value"]
+
+    value = getter()
+
+    with lyrics_lock:
+        stats_cache[stat_name]["value"] = value
+        stats_cache[stat_name]["updated_at"] = now
+
+    return value
 
 
 def get_amd_gpu_stats():
@@ -655,14 +687,15 @@ def fetch_best_lyrics(artist, track, album, duration_ms):
 
 
 def build_stats_payload():
+    now = time.time()
     return {
         "mode": "stats",
-        "cpu": psutil.cpu_percent(interval=None),
-        "ram": psutil.virtual_memory().percent,
-        "gpu": get_amd_gpu_stats(),
-        "cpu_temp": get_cpu_temp(),
-        "gpu_temp": get_gpu_temp(),
-        "disk": get_main_disk_usage(),
+        "cpu": get_cached_stat("cpu", lambda: psutil.cpu_percent(interval=None), now),
+        "ram": get_cached_stat("ram", lambda: psutil.virtual_memory().percent, now),
+        "gpu": get_cached_stat("gpu", get_amd_gpu_stats, now),
+        "cpu_temp": get_cached_stat("cpu_temp", get_cpu_temp, now),
+        "gpu_temp": get_cached_stat("gpu_temp", get_gpu_temp, now),
+        "disk": get_cached_stat("disk", get_main_disk_usage, now),
     }
 
 
@@ -718,7 +751,7 @@ def dashboard_data():
             lyrics_payload = dict(cached_lyrics_payload)
 
         payload = {
-            "mode": "music" if is_playing else "stats",
+            "mode": "music",
             "is_playing": is_playing,
             "has_active_track": True,
             "track": music_data.get("name"),
