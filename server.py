@@ -2,8 +2,11 @@ import os
 import re
 import time
 import threading
+import json
+import hashlib
 from concurrent.futures import ThreadPoolExecutor
 from collections import OrderedDict
+from pathlib import Path
 from urllib.parse import quote
 
 import psutil
@@ -30,7 +33,12 @@ cider_request_pool = ThreadPoolExecutor(max_workers=4)
 LYRICS_CACHE_MAX_BYTES = int(os.getenv("LYRICS_CACHE_MAX_BYTES", str(32 * 1024 * 1024)))
 LYRICS_CACHE_MAX_ENTRIES = int(os.getenv("LYRICS_CACHE_MAX_ENTRIES", "512"))
 LYRICS_CACHE_TTL_SECONDS = int(os.getenv("LYRICS_CACHE_TTL_SECONDS", str(7 * 24 * 60 * 60)))
+LYRICS_DISK_CACHE_DIR = Path(os.getenv("DASHY_CACHE_DIR", os.path.expanduser("~/.cache/dashy/lyrics")))
+LYRICS_DISK_CACHE_MAX_BYTES = int(os.getenv("DASHY_LYRICS_DISK_CACHE_MAX_BYTES", str(256 * 1024 * 1024)))
+LYRICS_DISK_CACHE_CLEANUP_INTERVAL_SECONDS = int(os.getenv("DASHY_LYRICS_DISK_CACHE_CLEANUP_INTERVAL_SECONDS", "300"))
+LYRICS_CACHE_SCHEMA_VERSION = 1
 lyrics_cache_bytes = 0
+next_disk_cache_cleanup_at = 0
 
 # Init non-blocking CPU check
 psutil.cpu_percent(interval=None)
@@ -49,6 +57,146 @@ def estimate_lyrics_payload_size(track_id, payload):
     return len(track_id.encode("utf-8")) + len(text.encode("utf-8")) + len(source.encode("utf-8")) + 64
 
 
+def normalize_cached_payload(payload):
+    return {
+        "text": payload.get("text"),
+        "is_synced": bool(payload.get("is_synced", False)),
+        "source": payload.get("source"),
+    }
+
+
+def build_disk_cache_key(track_id):
+    return hashlib.sha256(track_id.encode("utf-8")).hexdigest()
+
+
+def get_disk_cache_path(track_id):
+    cache_key = build_disk_cache_key(track_id)
+    return LYRICS_DISK_CACHE_DIR / cache_key[:2] / f"{cache_key}.json"
+
+
+def delete_disk_cache_path(path):
+    try:
+        path.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def cleanup_disk_cache(force=False):
+    global next_disk_cache_cleanup_at
+
+    now = time.time()
+    if not force and now < next_disk_cache_cleanup_at:
+        return
+    next_disk_cache_cleanup_at = now + LYRICS_DISK_CACHE_CLEANUP_INTERVAL_SECONDS
+
+    try:
+        if not LYRICS_DISK_CACHE_DIR.exists():
+            return
+
+        entries = []
+        total_size = 0
+
+        for path in LYRICS_DISK_CACHE_DIR.rglob("*.json"):
+            try:
+                stat = path.stat()
+                total_size += stat.st_size
+                entries.append({
+                    "path": path,
+                    "size": stat.st_size,
+                    "atime": stat.st_atime,
+                    "mtime": stat.st_mtime,
+                })
+            except FileNotFoundError:
+                continue
+
+        expired = []
+        for entry in entries:
+            try:
+                with entry["path"].open("r", encoding="utf-8") as handle:
+                    cached = json.load(handle)
+                if cached.get("expires_at", 0) < now:
+                    expired.append(entry)
+            except Exception:
+                expired.append(entry)
+
+        for entry in expired:
+            delete_disk_cache_path(entry["path"])
+            total_size -= entry["size"]
+
+        if total_size <= LYRICS_DISK_CACHE_MAX_BYTES:
+            return
+
+        live_entries = [entry for entry in entries if entry not in expired]
+        live_entries.sort(key=lambda item: (item["atime"], item["mtime"]))
+
+        for entry in live_entries:
+            if total_size <= LYRICS_DISK_CACHE_MAX_BYTES:
+                break
+            delete_disk_cache_path(entry["path"])
+            total_size -= entry["size"]
+    except Exception:
+        pass
+
+
+def get_disk_cached_lyrics(track_id):
+    path = get_disk_cache_path(track_id)
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            cached = json.load(handle)
+    except FileNotFoundError:
+        return None
+    except Exception:
+        delete_disk_cache_path(path)
+        return None
+
+    if cached.get("version") != LYRICS_CACHE_SCHEMA_VERSION:
+        delete_disk_cache_path(path)
+        return None
+
+    if cached.get("expires_at", 0) < time.time():
+        delete_disk_cache_path(path)
+        return None
+
+    payload = normalize_cached_payload(cached.get("payload", {}))
+
+    try:
+        os.utime(path, None)
+    except Exception:
+        pass
+
+    return payload
+
+
+def store_disk_cached_lyrics(track_id, payload):
+    path = get_disk_cache_path(track_id)
+    payload_copy = normalize_cached_payload(payload)
+    record = {
+        "version": LYRICS_CACHE_SCHEMA_VERSION,
+        "track_id": track_id,
+        "created_at": time.time(),
+        "expires_at": time.time() + LYRICS_CACHE_TTL_SECONDS,
+        "payload": payload_copy,
+    }
+
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = path.with_suffix(".tmp")
+        with temp_path.open("w", encoding="utf-8") as handle:
+            json.dump(record, handle, ensure_ascii=False, separators=(",", ":"))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, path)
+    except Exception:
+        try:
+            temp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return payload_copy
+
+    cleanup_disk_cache()
+    return payload_copy
+
+
 def get_cached_lyrics(track_id):
     global lyrics_cache_bytes
 
@@ -61,20 +209,21 @@ def get_cached_lyrics(track_id):
         if expires_at < time.time():
             lyrics_cache_bytes -= cached["size"]
             lyrics_result_cache.pop(track_id, None)
-            return None
+        else:
+            lyrics_result_cache.move_to_end(track_id)
+            return dict(cached["payload"])
 
-        lyrics_result_cache.move_to_end(track_id)
-        return dict(cached["payload"])
+    disk_payload = get_disk_cached_lyrics(track_id)
+    if not disk_payload:
+        return None
+
+    return store_memory_cached_lyrics(track_id, disk_payload)
 
 
-def store_cached_lyrics(track_id, payload):
+def store_memory_cached_lyrics(track_id, payload):
     global lyrics_cache_bytes
 
-    payload_copy = {
-        "text": payload.get("text"),
-        "is_synced": bool(payload.get("is_synced", False)),
-        "source": payload.get("source"),
-    }
+    payload_copy = normalize_cached_payload(payload)
     entry_size = estimate_lyrics_payload_size(track_id, payload_copy)
 
     # Do not allow one oversized payload to evict the entire cache.
@@ -100,6 +249,12 @@ def store_cached_lyrics(track_id, payload):
             _, removed = lyrics_result_cache.popitem(last=False)
             lyrics_cache_bytes -= removed["size"]
 
+    return payload_copy
+
+
+def store_cached_lyrics(track_id, payload):
+    payload_copy = store_memory_cached_lyrics(track_id, payload)
+    store_disk_cached_lyrics(track_id, payload_copy)
     return payload_copy
 
 
