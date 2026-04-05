@@ -21,6 +21,7 @@ current_track_id = None
 cached_lyrics_payload = {"text": None, "is_synced": False, "source": None}
 musixmatch_token = None
 lyrics_lock = threading.Lock()
+http_session = requests.Session()
 
 # Init non-blocking CPU check
 psutil.cpu_percent(interval=None)
@@ -108,11 +109,11 @@ def get_main_disk_usage():
 
 
 def cider_get(endpoint):
-    return requests.get(f"{CIDER_API_URL}/{endpoint}", headers=CIDER_HEADERS, timeout=0.8)
+    return http_session.get(f"{CIDER_API_URL}/{endpoint}", headers=CIDER_HEADERS, timeout=0.8)
 
 
 def cider_post(endpoint):
-    return requests.post(f"{CIDER_API_URL}/{endpoint}", headers=CIDER_HEADERS, timeout=0.8)
+    return http_session.post(f"{CIDER_API_URL}/{endpoint}", headers=CIDER_HEADERS, timeout=0.8)
 
 
 def normalize_text(value):
@@ -167,7 +168,7 @@ def merge_lrc_versions(primary_text, backup_text):
 
 def request_lrclib(url):
     try:
-        response = requests.get(url, timeout=3)
+        response = http_session.get(url, timeout=3)
         if response.status_code == 200:
             return response.json()
     except Exception as exc:
@@ -279,7 +280,7 @@ def get_musixmatch_token():
     global musixmatch_token
     url = f"{MUSIXMATCH_BASE}token.get?app_id=web-desktop-app-v1.0"
     try:
-        resp = requests.get(url, headers={"Authority": "apic-desktop.musixmatch.com"}, timeout=2)
+        resp = http_session.get(url, headers={"Authority": "apic-desktop.musixmatch.com"}, timeout=2)
         data = resp.json()
         musixmatch_token = data.get("message", {}).get("body", {}).get("user_token")
     except Exception:
@@ -308,14 +309,14 @@ def fetch_musixmatch(artist, track, album, duration_sec):
         params["q_album"] = album
 
     try:
-        resp = requests.get(url, params=params, headers={"Authority": "apic-desktop.musixmatch.com", "Cookie": f"x-mxm-user-id="}, timeout=3)
+        resp = http_session.get(url, params=params, headers={"Authority": "apic-desktop.musixmatch.com", "Cookie": f"x-mxm-user-id="}, timeout=3)
         data = resp.json()
 
         status = data.get("message", {}).get("header", {}).get("status_code")
         if status == 401:
             get_musixmatch_token()
             params["usertoken"] = musixmatch_token
-            resp = requests.get(url, params=params, headers={"Authority": "apic-desktop.musixmatch.com", "Cookie": f"x-mxm-user-id="}, timeout=3)
+            resp = http_session.get(url, params=params, headers={"Authority": "apic-desktop.musixmatch.com", "Cookie": f"x-mxm-user-id="}, timeout=3)
             data = resp.json()
 
         macro_calls = data.get("message", {}).get("body", {}).get("macro_calls", {})
@@ -357,10 +358,16 @@ def fetch_musixmatch(artist, track, album, duration_sec):
 
 def update_lyrics_background(artist, track, album, duration, job_track_id):
     global cached_lyrics_payload
+
     with lyrics_lock:
-        if job_track_id != current_track_id:
+        if job_track_id == current_track_id:
+            pass
+        else:
             return
-        payload = fetch_best_lyrics(artist, track, album, duration)
+
+    payload = fetch_best_lyrics(artist, track, album, duration)
+
+    with lyrics_lock:
         if job_track_id == current_track_id:
             cached_lyrics_payload = payload
 
@@ -438,8 +445,6 @@ def build_stats_payload():
 def dashboard_data():
     global current_track_id, cached_lyrics_payload
 
-    stats = build_stats_payload()
-
     try:
         is_playing_req = cider_get("is-playing")
         data_json = is_playing_req.json() if is_playing_req.status_code == 200 else {}
@@ -450,18 +455,23 @@ def dashboard_data():
     try:
         now_playing_req = cider_get("now-playing")
         if now_playing_req.status_code != 200:
-            return jsonify(stats)
+            return jsonify(build_stats_payload())
 
         music_data = now_playing_req.json().get("info", {})
         track_id = music_data.get("playParams", {}).get("id") or (music_data.get("name", "") + "::" + music_data.get("artistName", ""))
         has_active_track = bool(track_id and music_data.get("name"))
 
         if not has_active_track:
-            return jsonify(stats)
+            return jsonify(build_stats_payload())
 
-        if track_id != current_track_id:
-            current_track_id = track_id
-            cached_lyrics_payload = {"text": "", "is_synced": False, "source": None}
+        should_start_lyrics_job = False
+        with lyrics_lock:
+            if track_id != current_track_id:
+                current_track_id = track_id
+                cached_lyrics_payload = {"text": "", "is_synced": False, "source": None}
+                should_start_lyrics_job = True
+
+        if should_start_lyrics_job:
             t = threading.Thread(target=update_lyrics_background, args=(
                 music_data.get("artistName", ""),
                 music_data.get("name", ""),
@@ -471,6 +481,10 @@ def dashboard_data():
             ))
             t.daemon = True
             t.start()
+
+        payload_stats = build_stats_payload()
+        with lyrics_lock:
+            lyrics_payload = dict(cached_lyrics_payload)
 
         payload = {
             "mode": "music" if is_playing else "stats",
@@ -482,16 +496,19 @@ def dashboard_data():
             "artwork": music_data.get("artwork"),
             "current_time": music_data.get("currentPlaybackTime"),
             "duration": music_data.get("durationInMillis"),
-            "lyrics": cached_lyrics_payload.get("text"),
-            "lyrics_synced": cached_lyrics_payload.get("is_synced", False),
-            "lyrics_source": cached_lyrics_payload.get("source"),
-            "cpu": stats["cpu"],
-            "ram": stats["ram"],
-            "gpu": stats["gpu"],
+            "lyrics": lyrics_payload.get("text"),
+            "lyrics_synced": lyrics_payload.get("is_synced", False),
+            "lyrics_source": lyrics_payload.get("source"),
+            "cpu": payload_stats["cpu"],
+            "ram": payload_stats["ram"],
+            "gpu": payload_stats["gpu"],
+            "cpu_temp": payload_stats["cpu_temp"],
+            "gpu_temp": payload_stats["gpu_temp"],
+            "disk": payload_stats["disk"],
         }
         return jsonify(payload)
     except requests.RequestException:
-        return jsonify(stats)
+        return jsonify(build_stats_payload())
 
 
 @app.route("/api/control/<action>", methods=["POST"])

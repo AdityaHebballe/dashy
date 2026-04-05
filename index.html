@@ -150,7 +150,7 @@
             border-radius: inherit;
             background: linear-gradient(90deg, rgba(255,255,255,0.78), rgba(255,255,255,1));
             box-shadow: 0 0 18px var(--glow);
-            transition: width 700ms linear;
+            transition: width 120ms linear;
         }
 
         .time-row {
@@ -730,8 +730,6 @@
         }
 
         function updateStatsUI(data) {
-            showView('stats');
-
             const cpu = clampPercent(data.cpu);
             const gpu = clampPercent(data.gpu);
             const ram = clampPercent(data.ram);
@@ -849,12 +847,11 @@
                 const response = await fetch(API_URL);
                 const data = await response.json();
 
-                updateStatsUI(data);
-                updatePlayPauseButton(Boolean(data.is_playing));
-
                 if (data.has_active_track) {
+                    updateStatsUI(data);
                     updateMusicUI(data);
                 } else {
+                    updateStatsUI(data);
                     showView('stats');
                 }
             } catch (error) {
