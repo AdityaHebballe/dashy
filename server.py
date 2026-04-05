@@ -4,6 +4,7 @@ import time
 import threading
 import json
 import hashlib
+import socket
 from concurrent.futures import ThreadPoolExecutor
 from collections import OrderedDict
 from pathlib import Path
@@ -11,7 +12,7 @@ from urllib.parse import quote
 
 import psutil
 import requests
-from flask import Flask, jsonify
+from flask import Flask, jsonify, send_from_directory
 
 app = Flask(__name__)
 
@@ -20,6 +21,9 @@ CIDER_API_URL = "http://127.0.0.1:10767/api/v1/playback"
 CIDER_HEADERS = {"apitoken": ""}  # Add your token here if you didn't disable auth
 LRCLIB_BASE_URL = "https://lrclib.net/api"
 MUSIXMATCH_BASE = "https://apic-desktop.musixmatch.com/ws/1.1/"
+APP_HOST = os.getenv("DASHY_HOST", "0.0.0.0")
+APP_PORT = int(os.getenv("DASHY_PORT", "5000"))
+APP_DIR = Path(__file__).resolve().parent
 
 # --- CACHE ---
 current_track_id = None
@@ -790,6 +794,11 @@ def control_playback(action):
         return jsonify({"ok": False, "error": str(exc)}), 502
 
 
+@app.route("/")
+def index():
+    return send_from_directory(APP_DIR, "index.html")
+
+
 @app.after_request
 def add_cors_headers(response):
     response.headers["Access-Control-Allow-Origin"] = "*"
@@ -797,4 +806,6 @@ def add_cors_headers(response):
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    hostname = socket.gethostname()
+    print(f"Dashy listening on http://{hostname}.local:{APP_PORT}/")
+    app.run(host=APP_HOST, port=APP_PORT, debug=False)
