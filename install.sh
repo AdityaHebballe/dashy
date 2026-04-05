@@ -6,6 +6,9 @@ INSTALL_DIR="${HOME}/.local/share/${APP_NAME}"
 SYSTEMD_DIR="${HOME}/.config/systemd/user"
 SERVICE_FILE="${SYSTEMD_DIR}/${APP_NAME}.service"
 PYTHON_BIN="${PYTHON_BIN:-$(command -v python3)}"
+VENV_DIR="${INSTALL_DIR}/.venv"
+VENV_PYTHON="${VENV_DIR}/bin/python"
+VENV_PIP="${VENV_DIR}/bin/pip"
 HOSTNAME_LOCAL="$(hostname).local"
 PORT="${DASHY_PORT:-5000}"
 
@@ -19,6 +22,11 @@ mkdir -p "${SYSTEMD_DIR}"
 
 install -m 0644 server.py "${INSTALL_DIR}/server.py"
 install -m 0644 index.html "${INSTALL_DIR}/index.html"
+install -m 0644 requirements.txt "${INSTALL_DIR}/requirements.txt"
+
+"${PYTHON_BIN}" -m venv "${VENV_DIR}"
+"${VENV_PIP}" install --upgrade pip
+"${VENV_PIP}" install -r "${INSTALL_DIR}/requirements.txt"
 
 cat > "${SERVICE_FILE}" <<EOF
 [Unit]
@@ -29,7 +37,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=${INSTALL_DIR}
-ExecStart=${PYTHON_BIN} ${INSTALL_DIR}/server.py
+ExecStart=${VENV_PYTHON} ${INSTALL_DIR}/server.py
 Environment=PYTHONUNBUFFERED=1
 Environment=DASHY_HOST=0.0.0.0
 Environment=DASHY_PORT=${PORT}
@@ -47,6 +55,7 @@ echo
 echo "Dashy installed."
 echo "Service: ${SERVICE_FILE}"
 echo "App dir: ${INSTALL_DIR}"
+echo "Venv: ${VENV_DIR}"
 echo "URL: http://${HOSTNAME_LOCAL}:${PORT}/"
 echo
 echo "Notes:"
@@ -54,3 +63,6 @@ echo "- This is a systemd user service, so it starts automatically when your use
 echo "- For true boot-before-login behavior, enable linger manually:"
 echo "  loginctl enable-linger ${USER}"
 echo "- .local access works best when Avahi is running on this machine."
+echo "- Service management commands:"
+echo "  systemctl --user status ${APP_NAME}"
+echo "  journalctl --user -u ${APP_NAME} -n 100 --no-pager"
