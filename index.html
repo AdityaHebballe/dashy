@@ -487,6 +487,7 @@
         const CONTROL_URL = 'http://192.168.0.9:5000/api/control';
 
         let currentTrackId = '';
+        let currentLyricsKey = '';
         let parsedLyrics = [];
         let hasSyncedLyrics = false;
         let activeLyricIndex = -1;
@@ -496,6 +497,24 @@
         let localTime = 0;
         let lastUpdateTime = Date.now();
         let interpolationInterval = null;
+        let dashboardPollTimeout = null;
+        let dashboardFetchInFlight = false;
+
+        const progressFill = document.getElementById('progress-fill');
+        const currentTimeLabel = document.getElementById('current-time-label');
+        const durationLabel = document.getElementById('duration-label');
+        const trackNameElem = document.getElementById('track-name');
+        const artistNameElem = document.getElementById('artist-name');
+        const albumArtElem = document.getElementById('album-art');
+        const blurElem = document.getElementById('bg-blur');
+        const cpuStatElem = document.getElementById('cpu-stat');
+        const gpuStatElem = document.getElementById('gpu-stat');
+        const ramStatElem = document.getElementById('ram-stat');
+        const diskStatElem = document.getElementById('disk-stat');
+        const cpuBarElem = document.getElementById('cpu-bar');
+        const gpuBarElem = document.getElementById('gpu-bar');
+        const ramBarElem = document.getElementById('ram-bar');
+        const diskBarElem = document.getElementById('disk-bar');
 
         function startInterpolation() {
             if (interpolationInterval) clearInterval(interpolationInterval);
@@ -507,8 +526,8 @@
                     const clampTime = Math.min(localTime, currentDuration);
                     syncLyrics(clampTime + 0.25);
                     const progressPct = (clampTime / currentDuration) * 100;
-                    document.getElementById('progress-fill').style.width = `${progressPct}%`;
-                    document.getElementById('current-time-label').textContent = formatTime(clampTime);
+                    progressFill.style.width = `${progressPct}%`;
+                    currentTimeLabel.textContent = formatTime(clampTime);
                 }
             }, 64);
         }
@@ -593,6 +612,7 @@
 
             if (hasSyncedLyrics) {
                 const regex = /\[(\d{2}):(\d{2}(?:\.\d{2,3})?)\](.*)/;
+                const fragment = document.createDocumentFragment();
                 lyricsText.split('\n').forEach((rawLine) => {
                     const match = rawLine.match(regex);
                     if (!match) return;
@@ -605,14 +625,16 @@
                     const element = document.createElement('div');
                     element.className = 'lyric-line';
                     element.textContent = text;
-                    lyricsContainer.appendChild(element);
+                    fragment.appendChild(element);
 
                     parsedLyrics.push({
                         time: (minutes * 60) + seconds,
                         element
                     });
                 });
+                lyricsContainer.appendChild(fragment);
             } else {
+                const fragment = document.createDocumentFragment();
                 lyricsText
                     .split('\n')
                     .map((line) => line.trim())
@@ -621,20 +643,48 @@
                         const element = document.createElement('div');
                         element.className = `lyric-line unsynced${index === 0 ? ' active' : ''}`;
                         element.textContent = line;
-                        lyricsContainer.appendChild(element);
+                        fragment.appendChild(element);
                     });
+                lyricsContainer.appendChild(fragment);
             }
         }
 
         function applyLyricState(activeIndex) {
-            parsedLyrics.forEach((line, index) => {
-                line.element.classList.remove('previous', 'active');
-                if (index < activeIndex) {
-                    line.element.classList.add('previous');
-                } else if (index === activeIndex) {
-                    line.element.classList.add('active');
+            const previousIndex = activeLyricIndex;
+            if (previousIndex === activeIndex) return;
+
+            if (previousIndex >= 0) {
+                const previousLine = parsedLyrics[previousIndex]?.element;
+                if (previousLine) {
+                    previousLine.classList.remove('active');
+                    if (previousIndex < activeIndex) {
+                        previousLine.classList.add('previous');
+                    } else {
+                        previousLine.classList.remove('previous');
+                    }
                 }
-            });
+            }
+
+            if (activeIndex < 0) {
+                return;
+            }
+
+            if (previousIndex > activeIndex) {
+                for (let i = activeIndex + 1; i < previousIndex; i += 1) {
+                    parsedLyrics[i]?.element.classList.remove('previous', 'active');
+                }
+            } else {
+                for (let i = Math.max(previousIndex + 1, 0); i < activeIndex; i += 1) {
+                    parsedLyrics[i]?.element.classList.add('previous');
+                    parsedLyrics[i]?.element.classList.remove('active');
+                }
+            }
+
+            const activeLine = parsedLyrics[activeIndex]?.element;
+            if (activeLine) {
+                activeLine.classList.remove('previous');
+                activeLine.classList.add('active');
+            }
         }
 
         function scrollLyricsToActive(activeIndex) {
@@ -651,20 +701,32 @@
         function syncLyrics(currentTime) {
             if (!hasSyncedLyrics || parsedLyrics.length === 0) return;
 
-            let nextActiveIndex = -1;
-            for (let i = 0; i < parsedLyrics.length; i += 1) {
-                if (currentTime >= parsedLyrics[i].time) {
-                    nextActiveIndex = i;
-                } else {
-                    break;
+            let nextActiveIndex = activeLyricIndex;
+
+            if (nextActiveIndex < 0 || currentTime < parsedLyrics[nextActiveIndex].time) {
+                nextActiveIndex = -1;
+                for (let i = 0; i < parsedLyrics.length; i += 1) {
+                    if (currentTime >= parsedLyrics[i].time) {
+                        nextActiveIndex = i;
+                    } else {
+                        break;
+                    }
+                }
+            } else {
+                for (let i = nextActiveIndex + 1; i < parsedLyrics.length; i += 1) {
+                    if (currentTime >= parsedLyrics[i].time) {
+                        nextActiveIndex = i;
+                    } else {
+                        break;
+                    }
                 }
             }
 
             if (nextActiveIndex === -1 || nextActiveIndex === activeLyricIndex) return;
 
+            applyLyricState(nextActiveIndex);
             activeLyricIndex = nextActiveIndex;
-            applyLyricState(activeLyricIndex);
-            scrollLyricsToActive(activeLyricIndex);
+            scrollLyricsToActive(nextActiveIndex);
         }
 
         function updateStatsUI(data) {
@@ -675,17 +737,17 @@
             const ram = clampPercent(data.ram);
             const disk = Number(data.disk) || 0;
 
-            document.getElementById('cpu-stat').textContent = `${Math.round(cpu)}%`;
-            document.getElementById('gpu-stat').textContent = `${Math.round(gpu)}%`;
-            document.getElementById('ram-stat').textContent = `${Math.round(ram)}%`;
-            document.getElementById('disk-stat').textContent = `${disk.toFixed(1)} MB/s`;
+            cpuStatElem.textContent = `${Math.round(cpu)}%`;
+            gpuStatElem.textContent = `${Math.round(gpu)}%`;
+            ramStatElem.textContent = `${Math.round(ram)}%`;
+            diskStatElem.textContent = `${disk.toFixed(1)} MB/s`;
 
             const diskPct = Math.min(100, (disk / 500) * 100);
             
-            document.getElementById('cpu-bar').style.width = `${cpu}%`;
-            document.getElementById('gpu-bar').style.width = `${gpu}%`;
-            document.getElementById('ram-bar').style.width = `${ram}%`;
-            document.getElementById('disk-bar').style.width = `${diskPct}%`;
+            cpuBarElem.style.width = `${cpu}%`;
+            gpuBarElem.style.width = `${gpu}%`;
+            ramBarElem.style.width = `${ram}%`;
+            diskBarElem.style.width = `${diskPct}%`;
 
             updateTempBox('cpu-temp-box', 'cpu-temp-stat', data.cpu_temp);
             updateTempBox('gpu-temp-box', 'gpu-temp-stat', data.gpu_temp);
@@ -704,11 +766,11 @@
             const displayTrack = data.track || 'Unknown track';
             const displayArtist = data.artist || 'Unknown artist';
             
-            if (document.getElementById('track-name').textContent !== displayTrack) {
-                document.getElementById('track-name').textContent = displayTrack;
+            if (trackNameElem.textContent !== displayTrack) {
+                trackNameElem.textContent = displayTrack;
             }
-            if (document.getElementById('artist-name').textContent !== displayArtist) {
-                document.getElementById('artist-name').textContent = displayArtist;
+            if (artistNameElem.textContent !== displayArtist) {
+                artistNameElem.textContent = displayArtist;
             }
             
             let rawUrl = data.artwork?.url || (typeof data.artwork === 'string' ? data.artwork : '');
@@ -718,7 +780,6 @@
             }
             
             const placeholderSvg = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJyZ2JhKDI1NSwyNTUsMjU1LDAuMSkiIHN0cm9rZS13aWR0aD0iMSI+PHBhdGggZD0iTTkgMThWNWwxMi0ydjEzIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz48Y2lyY2xlIGN4PSI2IiBjeT0iMTgiIHI9IjMiLz48Y2lyY2xlIGN4PSIxOCIgY3k9IjE2IiByPSIzIi8+PC9zdmc+';
-            const albumArtElem = document.getElementById('album-art');
             const targetSrc = rawUrl || placeholderSvg;
             
             if (albumArtElem.getAttribute('src') !== targetSrc) {
@@ -726,7 +787,6 @@
                 albumArtElem.setAttribute('src', targetSrc);
             }
             
-            const blurElem = document.getElementById('bg-blur');
             const targetBg = rawUrl ? `url("${rawUrl}")` : 'none';
             if (!blurElem.style.backgroundImage.includes(rawUrl) || rawUrl === '') {
                 blurElem.style.backgroundImage = targetBg;
@@ -737,19 +797,26 @@
             lastUpdateTime = Date.now();
             playbackIsPlaying = Boolean(data.is_playing);
 
-            document.getElementById('duration-label').textContent = formatTime(currentDuration);
+            durationLabel.textContent = formatTime(currentDuration);
+            currentTimeLabel.textContent = formatTime(localTime);
+            progressFill.style.width = currentDuration > 0 ? `${(localTime / currentDuration) * 100}%` : '0%';
             updatePlayPauseButton(playbackIsPlaying);
 
-            const nextTrackId = `${data.track || ''}::${data.artist || ''}::${data.duration || ''}::${data.lyrics || ''}`;
+            const nextTrackId = `${data.track || ''}::${data.artist || ''}::${data.duration || ''}`;
+            const nextLyricsKey = `${data.lyrics_synced ? 'synced' : 'plain'}::${data.lyrics || ''}`;
             if (nextTrackId !== currentTrackId) {
                 currentTrackId = nextTrackId;
+                currentLyricsKey = nextLyricsKey;
+                renderLyrics(data.lyrics, data.lyrics_synced);
+                lyricsContainer.scrollTop = 0;
+                if (hasSyncedLyrics && parsedLyrics.length > 0) {
+                    syncLyrics(localTime + 0.25);
+                }
+            } else if (nextLyricsKey !== currentLyricsKey) {
+                currentLyricsKey = nextLyricsKey;
                 renderLyrics(data.lyrics, data.lyrics_synced);
                 if (hasSyncedLyrics && parsedLyrics.length > 0) {
-                    activeLyricIndex = -1;
-                    applyLyricState(activeLyricIndex);
-                    lyricsContainer.scrollTop = 0;
-                } else {
-                    lyricsContainer.scrollTop = 0;
+                    syncLyrics(localTime + 0.25);
                 }
             }
         }
@@ -760,6 +827,10 @@
 
             try {
                 await fetch(`${CONTROL_URL}/${action}`, { method: 'POST' });
+                if (dashboardPollTimeout) {
+                    clearTimeout(dashboardPollTimeout);
+                    dashboardPollTimeout = null;
+                }
                 setTimeout(fetchDashboard, 180);
             } catch (error) {
                 console.error('Control request failed', error);
@@ -771,6 +842,9 @@
         }
 
         async function fetchDashboard() {
+            if (dashboardFetchInFlight) return;
+            dashboardFetchInFlight = true;
+
             try {
                 const response = await fetch(API_URL);
                 const data = await response.json();
@@ -786,7 +860,8 @@
             } catch (error) {
                 console.error('Dashboard offline or unreachable', error);
             } finally {
-                setTimeout(fetchDashboard, 2500);
+                dashboardFetchInFlight = false;
+                dashboardPollTimeout = setTimeout(fetchDashboard, 2500);
             }
         }
 
