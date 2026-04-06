@@ -25,16 +25,30 @@ APP_PORT = int(os.getenv("DASHY_PORT", "5000"))
 APP_DIR = Path(__file__).resolve().parent
 CONFIG_DIR = Path(os.getenv("DASHY_CONFIG_DIR", os.path.expanduser("~/.config/dashy")))
 CONFIG_PATH = CONFIG_DIR / "config.json"
+ADMIN_CONFIG_PATH = CONFIG_DIR / "admin.json"
 MANGOHUD_LOG_DIR = Path(os.getenv("DASHY_MANGOHUD_LOG_DIR", os.path.expanduser("~/.local/state/dashy/mangohud")))
+GAME_ART_CACHE_DIR = Path(os.getenv("DASHY_GAME_ART_CACHE_DIR", os.path.expanduser("~/.cache/dashy/game_art")))
+GAME_ART_META_DIR = GAME_ART_CACHE_DIR / "games"
+GAME_ART_IMAGE_DIR = GAME_ART_CACHE_DIR / "images"
+GAME_ART_THUMB_DIR = GAME_ART_CACHE_DIR / "thumbs"
+SGDB_API_BASE = "https://www.steamgriddb.com/api/v2"
 
 DEFAULT_UI_CONFIG = {
     "lyrics_font_scale": 1.0,
     "album_art_scale": 1.0,
     "active_lyric_scale": 1.03,
+    "stats_bg_blur": 1.0,
+    "stats_bg_dim": 0.79,
+    "stats_card_opacity": 0.36,
     "control_mode": "buttons",
     "swipe_start_threshold": 6.0,
     "swipe_commit_threshold": 72.0,
     "stats_theme": "slate",
+}
+
+DEFAULT_ADMIN_CONFIG = {
+    "steamgriddb_api_key": "",
+    "game_art_overrides": {},
 }
 
 # --- CACHE ---
@@ -44,10 +58,16 @@ musixmatch_token = None
 lyrics_lock = threading.RLock()
 stats_lock = threading.RLock()
 config_lock = threading.RLock()
+admin_config_lock = threading.RLock()
+game_art_lock = threading.RLock()
 http_session = requests.Session()
 lyrics_result_cache = OrderedDict()
 cider_request_pool = ThreadPoolExecutor(max_workers=4)
 ui_config = dict(DEFAULT_UI_CONFIG)
+admin_config = dict(DEFAULT_ADMIN_CONFIG)
+admin_config_mtime = 0.0
+active_game_art_refreshes = set()
+game_art_refresh_failures = {}
 
 LYRICS_CACHE_MAX_BYTES = int(os.getenv("LYRICS_CACHE_MAX_BYTES", str(32 * 1024 * 1024)))
 LYRICS_CACHE_MAX_ENTRIES = int(os.getenv("LYRICS_CACHE_MAX_ENTRIES", "512"))
@@ -83,10 +103,22 @@ MANGOHUD_LOG_MAX_AGE_SECONDS = 24 * 60 * 60
 MANGOHUD_CLEANUP_INTERVAL_SECONDS = 6 * 60 * 60
 MANGOHUD_IDLE_POLL_SECONDS = 10.0
 MANGOHUD_ACTIVE_POLL_SECONDS = 1.0
+GAME_ART_CACHE_SCHEMA_VERSION = 3
+GAME_ART_TTL_SECONDS = int(os.getenv("DASHY_GAME_ART_TTL_SECONDS", str(30 * 24 * 60 * 60)))
+GAME_ART_CACHE_MAX_BYTES = int(os.getenv("DASHY_GAME_ART_CACHE_MAX_BYTES", str(256 * 1024 * 1024)))
+GAME_ART_CLEANUP_INTERVAL_SECONDS = int(os.getenv("DASHY_GAME_ART_CLEANUP_INTERVAL_SECONDS", "21600"))
+GAME_ART_REFRESH_BACKOFF_SECONDS = int(os.getenv("DASHY_GAME_ART_REFRESH_BACKOFF_SECONDS", "900"))
+GAME_ART_LAST_SEEN_WRITE_SECONDS = int(os.getenv("DASHY_GAME_ART_LAST_SEEN_WRITE_SECONDS", "300"))
+GAME_ART_HERO_LIMIT = int(os.getenv("DASHY_GAME_ART_HERO_LIMIT", "8"))
+GAME_ART_LOGO_LIMIT = int(os.getenv("DASHY_GAME_ART_LOGO_LIMIT", "10"))
+GAME_ART_ICON_LIMIT = int(os.getenv("DASHY_GAME_ART_ICON_LIMIT", "12"))
 next_mangohud_cleanup_at = 0.0
 mangohud_last_probe_at = 0.0
 mangohud_next_probe_delay = MANGOHUD_IDLE_POLL_SECONDS
 mangohud_last_fps_value = None
+mangohud_last_game_info = None
+last_primed_game_key = None
+next_game_art_cleanup_at = 0.0
 
 # Init non-blocking CPU check
 psutil.cpu_percent(interval=None)
@@ -117,6 +149,14 @@ cpu_sampler_thread = threading.Thread(target=cpu_sampler_loop, daemon=True)
 cpu_sampler_thread.start()
 
 
+def get_active_game_info():
+    now = time.time()
+    info = mangohud_last_game_info
+    if info and (now - float(info.get("mtime") or 0.0)) <= MANGOHUD_FPS_STALE_SECONDS:
+        return dict(info)
+    return None
+
+
 def clamp_config_value(name, value):
     if name == "control_mode":
         return value if value in {"buttons", "swipe"} else DEFAULT_UI_CONFIG[name]
@@ -132,6 +172,9 @@ def clamp_config_value(name, value):
         "lyrics_font_scale": (0.8, 1.5),
         "album_art_scale": (0.85, 1.25),
         "active_lyric_scale": (1.0, 1.12),
+        "stats_bg_blur": (0.0, 12.0),
+        "stats_bg_dim": (0.45, 1.0),
+        "stats_card_opacity": (0.12, 0.72),
         "swipe_start_threshold": (2.0, 24.0),
         "swipe_commit_threshold": (8.0, 72.0),
     }
@@ -154,6 +197,105 @@ def persist_ui_config():
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(temp_path, CONFIG_PATH)
+
+
+def normalize_admin_config(candidate):
+    overrides = candidate.get("game_art_overrides", {}) if isinstance(candidate, dict) else {}
+    if not isinstance(overrides, dict):
+        overrides = {}
+
+    normalized_overrides = {}
+    for game_key, override in overrides.items():
+        if not isinstance(game_key, str) or not isinstance(override, dict):
+            continue
+        normalized_overrides[game_key] = {
+            "lookup_query": (override.get("lookup_query") or "").strip(),
+            "matched_game_id": int(override.get("matched_game_id") or 0) or None,
+            "selected_hero_id": int(override.get("selected_hero_id") or 0) or None,
+            "selected_logo_id": int(override.get("selected_logo_id") or 0) or None,
+            "selected_icon_id": int(override.get("selected_icon_id") or 0) or None,
+        }
+
+    return {
+        "steamgriddb_api_key": ((candidate.get("steamgriddb_api_key") if isinstance(candidate, dict) else "") or "").strip(),
+        "game_art_overrides": normalized_overrides,
+    }
+
+
+def persist_admin_config():
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    temp_path = ADMIN_CONFIG_PATH.with_suffix(".tmp")
+    with temp_path.open("w", encoding="utf-8") as handle:
+        json.dump(admin_config, handle, ensure_ascii=False, indent=2, sort_keys=True)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temp_path, ADMIN_CONFIG_PATH)
+
+
+def load_admin_config_if_needed(force=False):
+    global admin_config, admin_config_mtime
+
+    try:
+        stat = ADMIN_CONFIG_PATH.stat()
+        mtime = stat.st_mtime
+    except FileNotFoundError:
+        with admin_config_lock:
+            admin_config = dict(DEFAULT_ADMIN_CONFIG)
+            persist_admin_config()
+            try:
+                admin_config_mtime = ADMIN_CONFIG_PATH.stat().st_mtime
+            except FileNotFoundError:
+                admin_config_mtime = 0.0
+        return
+    except Exception:
+        return
+
+    if not force and mtime <= admin_config_mtime:
+        return
+
+    try:
+        with ADMIN_CONFIG_PATH.open("r", encoding="utf-8") as handle:
+            loaded = json.load(handle)
+    except Exception:
+        with admin_config_lock:
+            admin_config = dict(DEFAULT_ADMIN_CONFIG)
+            persist_admin_config()
+            try:
+                admin_config_mtime = ADMIN_CONFIG_PATH.stat().st_mtime
+            except FileNotFoundError:
+                admin_config_mtime = 0.0
+        return
+
+    with admin_config_lock:
+        admin_config = normalize_admin_config(loaded if isinstance(loaded, dict) else {})
+        admin_config_mtime = mtime
+
+
+def get_admin_config():
+    load_admin_config_if_needed()
+    with admin_config_lock:
+        return json.loads(json.dumps(admin_config))
+
+
+def update_admin_overrides(game_key, partial_override):
+    global admin_config_mtime
+
+    load_admin_config_if_needed()
+    with admin_config_lock:
+        merged = dict(admin_config)
+        overrides = dict(merged.get("game_art_overrides", {}))
+        current = dict(overrides.get(game_key, {}))
+        current.update(partial_override)
+        overrides[game_key] = normalize_admin_config({"game_art_overrides": {game_key: current}})["game_art_overrides"][game_key]
+        merged["game_art_overrides"] = overrides
+        admin_config.clear()
+        admin_config.update(merged)
+        persist_admin_config()
+        try:
+            admin_config_mtime = ADMIN_CONFIG_PATH.stat().st_mtime
+        except FileNotFoundError:
+            admin_config_mtime = 0.0
+        return dict(overrides[game_key])
 
 
 def load_ui_config():
@@ -194,12 +336,249 @@ def update_ui_config(partial_config):
 
 
 load_ui_config()
+load_admin_config_if_needed(force=True)
 
 
 def estimate_lyrics_payload_size(track_id, payload):
     text = payload.get("text") or ""
     source = payload.get("source") or ""
     return len(track_id.encode("utf-8")) + len(text.encode("utf-8")) + len(source.encode("utf-8")) + 64
+
+
+def slugify_text(value):
+    text = (value or "").lower().strip()
+    text = re.sub(r"[^a-z0-9]+", "-", text)
+    return text.strip("-") or hashlib.sha256((value or "unknown").encode("utf-8")).hexdigest()[:16]
+
+
+def extract_mangohud_game_name(stem):
+    cleaned = re.sub(r"_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$", "", stem or "")
+    cleaned = cleaned.replace("_", " ").replace("-", " ")
+    cleaned = re.sub(r"(?<=[a-z])(?=[A-Z0-9])", " ", cleaned)
+    cleaned = re.sub(r"(?<=[A-Z])(?=[A-Z][a-z])", " ", cleaned)
+    cleaned = re.sub(r"(?<=[0-9])(?=[A-Za-z])", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned or "Unknown Game"
+
+
+def build_game_art_record_path(game_key):
+    return GAME_ART_META_DIR / f"{game_key}.json"
+
+
+def normalize_game_art_record(record):
+    def normalize_assets(items, default_style):
+        normalized = []
+        for item in items or []:
+            if not isinstance(item, dict):
+                continue
+            asset_id = int(item.get("id") or 0)
+            if not asset_id:
+                continue
+            normalized.append({
+                "id": asset_id,
+                "width": int(item.get("width") or 0),
+                "height": int(item.get("height") or 0),
+                "style": item.get("style") or default_style,
+                "mime": item.get("mime") or "image/png",
+                "url": item.get("url"),
+                "thumb_url": item.get("thumb_url"),
+                "thumb_filename": item.get("thumb_filename"),
+                "image_filename": item.get("image_filename"),
+            })
+        return normalized
+
+    return {
+        "game_key": record.get("game_key"),
+        "raw_name": record.get("raw_name"),
+        "display_name": record.get("display_name"),
+        "lookup_query": (record.get("lookup_query") or "").strip(),
+        "matched_game_id": int(record.get("matched_game_id") or 0) or None,
+        "matched_game_name": record.get("matched_game_name"),
+        "selected_hero_id": int(record.get("selected_hero_id") or 0) or None,
+        "selected_logo_id": int(record.get("selected_logo_id") or 0) or None,
+        "selected_icon_id": int(record.get("selected_icon_id") or 0) or None,
+        "heroes": normalize_assets(record.get("heroes", []), "alternate"),
+        "logos": normalize_assets(record.get("logos", []), "official"),
+        "icons": normalize_assets(record.get("icons", []), "official"),
+        "updated_at": float(record.get("updated_at") or 0),
+        "last_seen_at": float(record.get("last_seen_at") or 0),
+    }
+
+
+def expected_asset_filename(asset_kind, asset_id, url):
+    suffix = Path((url or "").split("?", 1)[0]).suffix or ".img"
+    return f"{asset_kind}-{asset_id}{suffix}"
+
+
+def expected_thumb_filename(asset_kind, asset_id, thumb_url):
+    suffix = Path((thumb_url or "").split("?", 1)[0]).suffix or ".img"
+    return f"thumb-{asset_kind}-{asset_id}{suffix}"
+
+
+def asset_collection_name(asset_kind):
+    return {
+        "hero": "heroes",
+        "logo": "logos",
+        "icon": "icons",
+    }[asset_kind]
+
+
+def hydrate_asset_filenames(record):
+    changed = False
+    for asset_kind in ("hero", "logo", "icon"):
+        assets = record.get(asset_collection_name(asset_kind), [])
+        for asset in assets:
+            asset_id = asset.get("id")
+            if not asset_id:
+                continue
+
+            if not asset.get("thumb_filename"):
+                thumb_filename = expected_thumb_filename(asset_kind, asset_id, asset.get("thumb_url"))
+                if (GAME_ART_THUMB_DIR / thumb_filename).exists():
+                    asset["thumb_filename"] = thumb_filename
+                    changed = True
+
+            if not asset.get("image_filename"):
+                image_filename = expected_asset_filename(asset_kind, asset_id, asset.get("url"))
+                if (GAME_ART_IMAGE_DIR / image_filename).exists():
+                    asset["image_filename"] = image_filename
+                    changed = True
+
+    return changed
+
+
+def resolve_asset_filename(asset_kind, asset, filename_field, base_dir, expected_builder):
+    filename = asset.get(filename_field)
+    if filename and (base_dir / filename).exists():
+        return filename
+
+    asset_id = asset.get("id")
+    if not asset_id:
+        return None
+
+    source_url = asset.get("thumb_url") if filename_field == "thumb_filename" else asset.get("url")
+    expected = expected_builder(asset_kind, asset_id, source_url)
+    if (base_dir / expected).exists():
+        asset[filename_field] = expected
+        return expected
+    return None
+
+
+def build_game_art_public_paths(record, asset_kind, asset):
+    game_key = record["game_key"]
+    thumb_filename = resolve_asset_filename(asset_kind, asset, "thumb_filename", GAME_ART_THUMB_DIR, expected_thumb_filename)
+    image_filename = resolve_asset_filename(asset_kind, asset, "image_filename", GAME_ART_IMAGE_DIR, expected_asset_filename)
+    result = {
+        "thumb_url": f"/api/game-art/thumb/{game_key}/{thumb_filename}" if thumb_filename else None,
+        "image_url": f"/api/game-art/image/{game_key}/{image_filename}" if image_filename else None,
+        "thumb_path": str((GAME_ART_THUMB_DIR / thumb_filename).resolve()) if thumb_filename else None,
+        "image_path": str((GAME_ART_IMAGE_DIR / image_filename).resolve()) if image_filename else None,
+    }
+    return result
+
+
+def cleanup_game_art_cache(force=False):
+    global next_game_art_cleanup_at
+
+    now = time.time()
+    if not force and now < next_game_art_cleanup_at:
+        return
+
+    next_game_art_cleanup_at = now + GAME_ART_CLEANUP_INTERVAL_SECONDS
+
+    try:
+        GAME_ART_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        GAME_ART_META_DIR.mkdir(parents=True, exist_ok=True)
+        GAME_ART_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+        GAME_ART_THUMB_DIR.mkdir(parents=True, exist_ok=True)
+
+        entries = []
+        total_size = 0
+        for path in GAME_ART_CACHE_DIR.rglob("*"):
+            if not path.is_file():
+                continue
+            try:
+                stat = path.stat()
+            except FileNotFoundError:
+                continue
+            total_size += stat.st_size
+            entries.append((path, stat.st_size, stat.st_atime, stat.st_mtime))
+            if (now - stat.st_mtime) > GAME_ART_TTL_SECONDS:
+                path.unlink(missing_ok=True)
+                total_size -= stat.st_size
+
+        if total_size <= GAME_ART_CACHE_MAX_BYTES:
+            return
+
+        live_entries = []
+        for path, size, atime, mtime in entries:
+            if not path.exists():
+                continue
+            live_entries.append((path, size, atime, mtime))
+        live_entries.sort(key=lambda item: (item[2], item[3]))
+
+        for path, size, _atime, _mtime in live_entries:
+            if total_size <= GAME_ART_CACHE_MAX_BYTES:
+                break
+            path.unlink(missing_ok=True)
+            total_size -= size
+    except Exception:
+        pass
+
+
+def get_game_art_record(game_key):
+    path = build_game_art_record_path(game_key)
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            raw = json.load(handle)
+    except FileNotFoundError:
+        return None
+    except Exception:
+        path.unlink(missing_ok=True)
+        return None
+
+    if raw.get("version") != GAME_ART_CACHE_SCHEMA_VERSION:
+        path.unlink(missing_ok=True)
+        return None
+    if raw.get("expires_at", 0) < time.time():
+        path.unlink(missing_ok=True)
+        return None
+
+    try:
+        os.utime(path, None)
+    except Exception:
+        pass
+
+    record = normalize_game_art_record(raw)
+    if hydrate_asset_filenames(record):
+        store_game_art_record(game_key, record)
+    return record
+
+
+def store_game_art_record(game_key, record):
+    record_path = build_game_art_record_path(game_key)
+    record_payload = normalize_game_art_record(record)
+    stored = {
+        "version": GAME_ART_CACHE_SCHEMA_VERSION,
+        "expires_at": time.time() + GAME_ART_TTL_SECONDS,
+        "updated_at": time.time(),
+        **record_payload,
+    }
+    try:
+        record_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = record_path.with_suffix(".tmp")
+        with temp_path.open("w", encoding="utf-8") as handle:
+            json.dump(stored, handle, ensure_ascii=False, separators=(",", ":"))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, record_path)
+    except Exception:
+        try:
+            temp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+    cleanup_game_art_cache()
+    return record_payload
 
 
 def normalize_cached_payload(payload):
@@ -557,20 +936,10 @@ def cleanup_mangohud_logs(force=False):
         pass
 
 
-def get_mangohud_fps():
-    global mangohud_last_probe_at, mangohud_next_probe_delay, mangohud_last_fps_value
-
+def get_latest_mangohud_log(now=None):
+    now = now or time.time()
     try:
-        now = time.time()
-        if (now - mangohud_last_probe_at) < mangohud_next_probe_delay:
-            return mangohud_last_fps_value
-
-        mangohud_last_probe_at = now
-        cleanup_mangohud_logs()
-
         if not MANGOHUD_LOG_DIR.is_dir():
-            mangohud_last_fps_value = None
-            mangohud_next_probe_delay = MANGOHUD_IDLE_POLL_SECONDS
             return None
 
         latest_path = None
@@ -588,25 +957,446 @@ def get_mangohud_fps():
                 latest_mtime = stat.st_mtime
                 latest_path = path
 
-        if latest_path is None:
-            mangohud_last_fps_value = None
-            mangohud_next_probe_delay = MANGOHUD_IDLE_POLL_SECONDS
+        if latest_path is None or (now - latest_mtime) > MANGOHUD_FPS_STALE_SECONDS:
             return None
 
-        if (now - latest_mtime) > MANGOHUD_FPS_STALE_SECONDS:
-            mangohud_last_fps_value = None
-            mangohud_next_probe_delay = MANGOHUD_IDLE_POLL_SECONDS
-            return None
-
-        line = read_last_text_line(latest_path)
-        fps_value = parse_mangohud_fps_line(line)
-        mangohud_last_fps_value = fps_value
-        mangohud_next_probe_delay = MANGOHUD_ACTIVE_POLL_SECONDS if fps_value is not None else MANGOHUD_IDLE_POLL_SECONDS
-        return fps_value
+        display_name = extract_mangohud_game_name(latest_path.stem)
+        return {
+            "path": latest_path,
+            "mtime": latest_mtime,
+            "raw_name": latest_path.stem,
+            "display_name": display_name,
+            "game_key": slugify_text(display_name),
+        }
     except Exception:
-        mangohud_last_fps_value = None
-        mangohud_next_probe_delay = MANGOHUD_IDLE_POLL_SECONDS
         return None
+
+
+def guess_lookup_query(display_name):
+    query = (display_name or "").replace(":", " ")
+    query = re.sub(r"\s+", " ", query).strip()
+    return query
+
+
+def score_sgdb_match(candidate_name, query):
+    target = re.sub(r"[^a-z0-9]+", "", (query or "").lower())
+    candidate = re.sub(r"[^a-z0-9]+", "", (candidate_name or "").lower())
+    if not target or not candidate:
+        return -999
+    if candidate == target:
+        return 100
+    if candidate_name.lower() == query.lower():
+        return 90
+    if candidate.startswith(target):
+        return 70
+    if target in candidate:
+        return 50
+    return -abs(len(candidate) - len(target))
+
+
+def get_game_art_override(game_key):
+    config = get_admin_config()
+    return dict(config.get("game_art_overrides", {}).get(game_key, {}))
+
+
+def sgdb_request(path):
+    config = get_admin_config()
+    api_key = (config.get("steamgriddb_api_key") or "").strip()
+    if not api_key:
+        return None
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "User-Agent": "dashy/1.0",
+    }
+    try:
+        response = http_session.get(f"{SGDB_API_BASE}{path}", headers=headers, timeout=8)
+        if response.status_code != 200:
+            return None
+        payload = response.json()
+        if not isinstance(payload, dict) or not payload.get("success"):
+            return None
+        return payload
+    except Exception:
+        return None
+
+
+def sgdb_select_game(query, forced_game_id=None):
+    if forced_game_id:
+        payload = sgdb_request(f"/games/id/{int(forced_game_id)}")
+        data = payload.get("data") if payload else None
+        if isinstance(data, dict):
+            return {"id": int(data.get("id") or forced_game_id), "name": data.get("name") or query}
+
+    payload = sgdb_request(f"/search/autocomplete/{quote(query)}")
+    entries = payload.get("data", []) if payload else []
+    if not entries:
+        return None
+
+    best = max(entries, key=lambda item: score_sgdb_match(item.get("name", ""), query))
+    return {"id": int(best.get("id") or 0), "name": best.get("name") or query} if best.get("id") else None
+
+
+def download_cached_file(url, destination_dir, stem_prefix):
+    if not url:
+        return None
+    suffix = Path(url.split("?", 1)[0]).suffix or ".img"
+    filename = f"{stem_prefix}{suffix}"
+    path = destination_dir / filename
+    if path.exists():
+        try:
+            os.utime(path, None)
+        except Exception:
+            pass
+        return filename
+
+    try:
+        destination_dir.mkdir(parents=True, exist_ok=True)
+        temp_path = path.with_suffix(path.suffix + ".tmp")
+        with http_session.get(url, stream=True, timeout=12) as response:
+            if response.status_code != 200:
+                return None
+            with temp_path.open("wb") as handle:
+                for chunk in response.iter_content(chunk_size=65536):
+                    if chunk:
+                        handle.write(chunk)
+                handle.flush()
+                os.fsync(handle.fileno())
+        os.replace(temp_path, path)
+        return filename
+    except Exception:
+        try:
+            temp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return None
+
+
+def fetch_sgdb_asset_group(match, endpoint, thumb_prefix, image_prefix, limit, default_style):
+    payload = sgdb_request(f"/{endpoint}/game/{match['id']}")
+    items = payload.get("data", []) if payload else []
+    if not items:
+        return []
+
+    assets = []
+    for item in items[:limit]:
+        asset_id = int(item.get("id") or 0)
+        if not asset_id:
+            continue
+        assets.append({
+            "id": asset_id,
+            "width": int(item.get("width") or 0),
+            "height": int(item.get("height") or 0),
+            "style": item.get("style") or default_style,
+            "mime": item.get("mime") or "image/png",
+            "url": item.get("url"),
+            "thumb_url": item.get("thumb"),
+            "thumb_filename": None,
+            "image_filename": None,
+            "_image_prefix": image_prefix,
+            "_thumb_prefix": thumb_prefix,
+        })
+    return assets
+
+
+def fetch_sgdb_assets(game_info, query=None, forced_game_id=None):
+    lookup_query = query or guess_lookup_query(game_info["display_name"])
+    match = sgdb_select_game(lookup_query, forced_game_id=forced_game_id)
+    if not match:
+        return None
+
+    heroes = fetch_sgdb_asset_group(match, "heroes", "thumb-hero", "hero", GAME_ART_HERO_LIMIT, "alternate")
+    logos = fetch_sgdb_asset_group(match, "logos", "thumb-logo", "logo", GAME_ART_LOGO_LIMIT, "official")
+    icons = fetch_sgdb_asset_group(match, "icons", "thumb-icon", "icon", GAME_ART_ICON_LIMIT, "official")
+
+    if not heroes and not logos and not icons:
+        return None
+
+    return {
+        "lookup_query": lookup_query,
+        "matched_game_id": match["id"],
+        "matched_game_name": match["name"],
+        "heroes": heroes,
+        "logos": logos,
+        "icons": icons,
+    }
+
+
+def ensure_asset_download(record, asset_kind, asset_id=None, include_image=True):
+    assets = record.get(asset_collection_name(asset_kind), [])
+    for asset in assets:
+        current_id = asset.get("id")
+        if asset_id is not None and current_id != asset_id:
+            continue
+        if not asset.get("thumb_filename"):
+            expected_thumb = expected_thumb_filename(asset_kind, current_id, asset.get("thumb_url"))
+            expected_thumb_path = GAME_ART_THUMB_DIR / expected_thumb
+            if expected_thumb_path.exists():
+                asset["thumb_filename"] = expected_thumb
+            else:
+                thumb_prefix = asset.get("_thumb_prefix") or f"thumb-{asset_kind}"
+                asset["thumb_filename"] = download_cached_file(asset.get("thumb_url"), GAME_ART_THUMB_DIR, f"{thumb_prefix}-{current_id}")
+        if include_image and not asset.get("image_filename"):
+            image_prefix = asset.get("_image_prefix") or asset_kind
+            expected_filename = expected_asset_filename(image_prefix, current_id, asset.get("url"))
+            expected_path = GAME_ART_IMAGE_DIR / expected_filename
+            if expected_path.exists():
+                asset["image_filename"] = expected_filename
+            else:
+                asset["image_filename"] = download_cached_file(asset.get("url"), GAME_ART_IMAGE_DIR, f"{image_prefix}-{current_id}")
+        if asset_id is not None:
+            break
+    return record
+
+
+def ensure_selected_asset_download(record, asset_kind):
+    selected_id = record.get(f"selected_{asset_kind}_id")
+    if not selected_id:
+        return record
+    return ensure_asset_download(record, asset_kind, asset_id=selected_id, include_image=True)
+
+
+def ensure_selected_game_art_download(record):
+    ensure_selected_asset_download(record, "hero")
+    ensure_selected_asset_download(record, "logo")
+    ensure_selected_asset_download(record, "icon")
+    return record
+
+
+def refresh_game_art_record(game_info, query=None, forced_game_id=None):
+    override = get_game_art_override(game_info["game_key"])
+    fetch_result = fetch_sgdb_assets(
+        game_info,
+        query=query or override.get("lookup_query") or None,
+        forced_game_id=forced_game_id or override.get("matched_game_id"),
+    )
+    if not fetch_result:
+        return None
+
+    selected_hero_id = override.get("selected_hero_id")
+    hero_ids = {hero["id"] for hero in fetch_result["heroes"]}
+    if hero_ids and selected_hero_id not in hero_ids:
+        selected_hero_id = fetch_result["heroes"][0]["id"]
+
+    selected_logo_id = override.get("selected_logo_id")
+    logo_ids = {logo["id"] for logo in fetch_result["logos"]}
+    if logo_ids and selected_logo_id not in logo_ids:
+        selected_logo_id = fetch_result["logos"][0]["id"]
+
+    selected_icon_id = override.get("selected_icon_id")
+    icon_ids = {icon["id"] for icon in fetch_result["icons"]}
+    if icon_ids and selected_icon_id not in icon_ids:
+        selected_icon_id = fetch_result["icons"][0]["id"]
+
+    update_admin_overrides(game_info["game_key"], {
+        "selected_hero_id": selected_hero_id,
+        "selected_logo_id": selected_logo_id,
+        "selected_icon_id": selected_icon_id,
+    })
+
+    record = {
+        "game_key": game_info["game_key"],
+        "raw_name": game_info["raw_name"],
+        "display_name": game_info["display_name"],
+        "lookup_query": fetch_result["lookup_query"],
+        "matched_game_id": fetch_result["matched_game_id"],
+        "matched_game_name": fetch_result["matched_game_name"],
+        "selected_hero_id": selected_hero_id,
+        "selected_logo_id": selected_logo_id,
+        "selected_icon_id": selected_icon_id,
+        "heroes": fetch_result["heroes"],
+        "logos": fetch_result["logos"],
+        "icons": fetch_result["icons"],
+        "last_seen_at": time.time(),
+    }
+    for hero in record["heroes"]:
+        ensure_asset_download(record, "hero", asset_id=hero["id"], include_image=False)
+    for logo in record["logos"]:
+        ensure_asset_download(record, "logo", asset_id=logo["id"], include_image=False)
+    for icon in record["icons"]:
+        ensure_asset_download(record, "icon", asset_id=icon["id"], include_image=False)
+    ensure_selected_game_art_download(record)
+    return store_game_art_record(game_info["game_key"], record)
+
+
+def start_game_art_refresh(game_info, query=None, forced_game_id=None):
+    game_key = game_info["game_key"]
+    with game_art_lock:
+        last_failure = game_art_refresh_failures.get(game_key, 0.0)
+        if not (query or forced_game_id) and last_failure and (time.time() - last_failure) < GAME_ART_REFRESH_BACKOFF_SECONDS:
+            return
+        if game_key in active_game_art_refreshes:
+            return
+        active_game_art_refreshes.add(game_key)
+
+    def worker():
+        try:
+            record = refresh_game_art_record(game_info, query=query, forced_game_id=forced_game_id)
+            with game_art_lock:
+                if record:
+                    game_art_refresh_failures.pop(game_key, None)
+                else:
+                    game_art_refresh_failures[game_key] = time.time()
+        finally:
+            with game_art_lock:
+                active_game_art_refreshes.discard(game_key)
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+
+
+def maybe_prime_game_art(game_info, now=None):
+    if not game_info:
+        return
+
+    now = now or time.time()
+    config = get_admin_config()
+    if not config.get("steamgriddb_api_key"):
+        return
+
+    record = get_game_art_record(game_info["game_key"])
+    if record:
+        should_store = False
+        if record.get("selected_hero_id"):
+            selected_hero = next((hero for hero in record.get("heroes", []) if hero.get("id") == record.get("selected_hero_id")), None)
+            if selected_hero and not selected_hero.get("image_filename"):
+                record = ensure_selected_game_art_download(record)
+                should_store = True
+        if record.get("selected_logo_id"):
+            selected_logo = next((logo for logo in record.get("logos", []) if logo.get("id") == record.get("selected_logo_id")), None)
+            if selected_logo and not selected_logo.get("image_filename"):
+                record = ensure_selected_game_art_download(record)
+                should_store = True
+        if record.get("selected_icon_id"):
+            selected_icon = next((icon for icon in record.get("icons", []) if icon.get("id") == record.get("selected_icon_id")), None)
+            if selected_icon and not selected_icon.get("image_filename"):
+                record = ensure_selected_game_art_download(record)
+                should_store = True
+        if (now - float(record.get("last_seen_at") or 0.0)) >= GAME_ART_LAST_SEEN_WRITE_SECONDS:
+            record["last_seen_at"] = now
+            should_store = True
+        if should_store:
+            store_game_art_record(game_info["game_key"], record)
+        return
+
+    start_game_art_refresh(game_info)
+
+
+def mangohud_monitor_loop():
+    global mangohud_last_probe_at, mangohud_next_probe_delay, mangohud_last_game_info, mangohud_last_fps_value, last_primed_game_key
+
+    while True:
+        now = time.time()
+        try:
+            cleanup_mangohud_logs()
+            latest_log = get_latest_mangohud_log(now)
+            mangohud_last_probe_at = now
+            mangohud_last_game_info = latest_log
+            if latest_log:
+                line = read_last_text_line(latest_log["path"])
+                mangohud_last_fps_value = parse_mangohud_fps_line(line)
+                game_key = latest_log["game_key"]
+                if game_key != last_primed_game_key:
+                    maybe_prime_game_art(latest_log, now=now)
+                    last_primed_game_key = game_key
+                mangohud_next_probe_delay = MANGOHUD_ACTIVE_POLL_SECONDS
+            else:
+                mangohud_last_fps_value = None
+                last_primed_game_key = None
+                mangohud_next_probe_delay = MANGOHUD_IDLE_POLL_SECONDS
+        except Exception:
+            mangohud_last_fps_value = None
+            mangohud_next_probe_delay = MANGOHUD_IDLE_POLL_SECONDS
+
+        time.sleep(max(1.0, mangohud_next_probe_delay))
+
+
+mangohud_monitor_thread = threading.Thread(target=mangohud_monitor_loop, daemon=True)
+mangohud_monitor_thread.start()
+
+
+def build_game_art_payload(record, active_game_key=None):
+    if not record:
+        return None
+
+    record = ensure_selected_game_art_download(record)
+
+    def build_assets(asset_kind):
+        selected_asset = None
+        assets = []
+        selected_id = record.get(f"selected_{asset_kind}_id")
+        for asset in record.get(asset_collection_name(asset_kind), []):
+            paths = build_game_art_public_paths(record, asset_kind, asset)
+            payload = {
+                "id": asset.get("id"),
+                "width": asset.get("width"),
+                "height": asset.get("height"),
+                "style": asset.get("style"),
+                "thumb_url": paths["thumb_url"],
+                "image_url": paths["image_url"],
+                "thumb_path": paths["thumb_path"],
+                "image_path": paths["image_path"],
+                "selected": asset.get("id") == selected_id,
+            }
+            if payload["selected"]:
+                selected_asset = payload
+            assets.append(payload)
+        return selected_asset, assets
+
+    selected_hero, heroes = build_assets("hero")
+    selected_logo, logos = build_assets("logo")
+    selected_icon, icons = build_assets("icon")
+
+    override = get_game_art_override(record["game_key"])
+    return {
+        "game_key": record.get("game_key"),
+        "display_name": record.get("display_name"),
+        "raw_name": record.get("raw_name"),
+        "lookup_query": override.get("lookup_query") or record.get("lookup_query"),
+        "matched_game_id": record.get("matched_game_id"),
+        "matched_game_name": record.get("matched_game_name"),
+        "selected_hero_id": record.get("selected_hero_id"),
+        "selected_logo_id": record.get("selected_logo_id"),
+        "selected_icon_id": record.get("selected_icon_id"),
+        "selected_image_url": selected_hero.get("image_url") if selected_hero else None,
+        "selected_thumb_url": selected_hero.get("thumb_url") if selected_hero else None,
+        "selected_image_path": selected_hero.get("image_path") if selected_hero else None,
+        "selected_thumb_path": selected_hero.get("thumb_path") if selected_hero else None,
+        "selected_logo_url": selected_logo.get("image_url") if selected_logo else None,
+        "selected_logo_thumb_url": selected_logo.get("thumb_url") if selected_logo else None,
+        "selected_logo_path": selected_logo.get("image_path") if selected_logo else None,
+        "selected_logo_thumb_path": selected_logo.get("thumb_path") if selected_logo else None,
+        "selected_icon_url": selected_icon.get("image_url") if selected_icon else None,
+        "selected_icon_thumb_url": selected_icon.get("thumb_url") if selected_icon else None,
+        "selected_icon_path": selected_icon.get("image_path") if selected_icon else None,
+        "selected_icon_thumb_path": selected_icon.get("thumb_path") if selected_icon else None,
+        "fps_asset_url": (selected_logo.get("image_url") if selected_logo else None) or (selected_icon.get("image_url") if selected_icon else None),
+        "fps_asset_thumb_url": (selected_logo.get("thumb_url") if selected_logo else None) or (selected_icon.get("thumb_url") if selected_icon else None),
+        "fps_asset_path": (selected_logo.get("image_path") if selected_logo else None) or (selected_icon.get("image_path") if selected_icon else None),
+        "heroes": heroes,
+        "logos": logos,
+        "icons": icons,
+        "active": record.get("game_key") == active_game_key,
+        "last_seen_at": record.get("last_seen_at"),
+    }
+
+
+def get_all_game_art_records():
+    records = []
+    try:
+        if not GAME_ART_META_DIR.is_dir():
+            return records
+        for path in GAME_ART_META_DIR.glob("*.json"):
+            record = get_game_art_record(path.stem)
+            if record:
+                records.append(record)
+    except Exception:
+        pass
+    records.sort(key=lambda item: item.get("last_seen_at", 0), reverse=True)
+    return records
+
+
+def get_mangohud_fps():
+    return mangohud_last_fps_value
 
 
 def cider_get(endpoint):
@@ -938,6 +1728,14 @@ def build_stats_payload():
     with stats_lock:
         cpu_value = stats_cache["cpu"]["value"]
     fps_value = get_cached_stat("fps", get_mangohud_fps, now)
+    game_info = get_active_game_info() if fps_value is not None else None
+    game_art = None
+    if game_info:
+        record = get_game_art_record(game_info["game_key"])
+        if record:
+            game_art = build_game_art_payload(record, active_game_key=game_info["game_key"])
+        else:
+            maybe_prime_game_art(game_info, now=now)
     return {
         "mode": "stats",
         "ui_config": get_ui_config(),
@@ -951,6 +1749,9 @@ def build_stats_payload():
         "disk": get_cached_stat("disk", get_main_disk_usage, now),
         "fps": fps_value,
         "mangohud_active": fps_value is not None,
+        "game_name": game_info["display_name"] if game_info else None,
+        "game_key": game_info["game_key"] if game_info else None,
+        "game_art": game_art,
     }
 
 
@@ -1036,6 +1837,158 @@ def config_data():
 
     updated = update_ui_config(payload)
     return jsonify({"ok": True, "config": updated})
+
+
+@app.route("/api/game-art/games", methods=["GET"])
+def game_art_games():
+    active_game_info = get_active_game_info()
+    active_game_key = active_game_info["game_key"] if active_game_info else None
+    records = [build_game_art_payload(record, active_game_key=active_game_key) for record in get_all_game_art_records()]
+    records = [record for record in records if record is not None]
+    if active_game_info and all(record["game_key"] != active_game_key for record in records):
+        override = get_game_art_override(active_game_key)
+        records.insert(0, {
+            "game_key": active_game_info["game_key"],
+            "display_name": active_game_info["display_name"],
+            "raw_name": active_game_info["raw_name"],
+            "lookup_query": override.get("lookup_query") or guess_lookup_query(active_game_info["display_name"]),
+            "matched_game_id": override.get("matched_game_id"),
+            "matched_game_name": None,
+            "selected_hero_id": override.get("selected_hero_id"),
+            "selected_logo_id": override.get("selected_logo_id"),
+            "selected_icon_id": override.get("selected_icon_id"),
+            "selected_image_url": None,
+            "selected_thumb_url": None,
+            "selected_image_path": None,
+            "selected_thumb_path": None,
+            "selected_logo_url": None,
+            "selected_logo_thumb_url": None,
+            "selected_logo_path": None,
+            "selected_logo_thumb_path": None,
+            "selected_icon_url": None,
+            "selected_icon_thumb_url": None,
+            "selected_icon_path": None,
+            "selected_icon_thumb_path": None,
+            "fps_asset_url": None,
+            "fps_asset_thumb_url": None,
+            "fps_asset_path": None,
+            "heroes": [],
+            "logos": [],
+            "icons": [],
+            "active": True,
+            "last_seen_at": active_game_info["mtime"],
+        })
+    return jsonify({
+        "ok": True,
+        "has_api_key": bool(get_admin_config().get("steamgriddb_api_key")),
+        "active_game_key": active_game_key,
+        "active_game_name": active_game_info["display_name"] if active_game_info else None,
+        "games": records,
+    })
+
+
+@app.route("/api/game-art/refresh", methods=["POST"])
+def refresh_game_art():
+    payload = request.get_json(silent=True) or {}
+    game_key = payload.get("game_key")
+    query = (payload.get("query") or "").strip() or None
+    forced_game_id = int(payload.get("matched_game_id") or 0) or None
+
+    if game_key:
+        record = get_game_art_record(game_key)
+        if record:
+            game_info = {
+                "game_key": record["game_key"],
+                "display_name": record["display_name"],
+                "raw_name": record["raw_name"],
+            }
+        else:
+            active_game_info = get_active_game_info()
+            if active_game_info and active_game_info["game_key"] == game_key:
+                game_info = dict(active_game_info)
+            else:
+                return jsonify({"ok": False, "error": "Unknown game"}), 404
+    else:
+        game_info = get_active_game_info()
+        if not game_info:
+            return jsonify({"ok": False, "error": "No active MangoHud game detected"}), 404
+
+    if query is not None:
+        update_admin_overrides(game_info["game_key"], {"lookup_query": query})
+    if forced_game_id is not None:
+        update_admin_overrides(game_info["game_key"], {"matched_game_id": forced_game_id})
+
+    record = refresh_game_art_record(game_info, query=query, forced_game_id=forced_game_id)
+    if not record:
+        return jsonify({"ok": False, "error": "No SteamGridDB match or artwork found"}), 404
+    active_game_info = get_active_game_info()
+    return jsonify({"ok": True, "game": build_game_art_payload(record, active_game_key=active_game_info["game_key"] if active_game_info else None)})
+
+
+@app.route("/api/game-art/select", methods=["POST"])
+def select_game_art():
+    payload = request.get_json(silent=True) or {}
+    game_key = payload.get("game_key")
+    hero_id = int(payload.get("hero_id") or 0) or None
+    asset_kind = (payload.get("asset_kind") or "hero").strip().lower()
+    if asset_kind not in {"hero", "logo", "icon"}:
+        return jsonify({"ok": False, "error": "Expected asset_kind to be hero, logo, or icon"}), 400
+    asset_id = hero_id
+    if not game_key or not asset_id:
+        return jsonify({"ok": False, "error": "Expected game_key and hero_id"}), 400
+
+    record = get_game_art_record(game_key)
+    if not record:
+        return jsonify({"ok": False, "error": "Unknown game"}), 404
+
+    asset_field = asset_collection_name(asset_kind)
+    if asset_id not in {asset["id"] for asset in record.get(asset_field, [])}:
+        return jsonify({"ok": False, "error": f"{asset_kind.title()} not available in cache"}), 404
+
+    update_admin_overrides(game_key, {f"selected_{asset_kind}_id": asset_id})
+    record[f"selected_{asset_kind}_id"] = asset_id
+    record = ensure_selected_asset_download(record, asset_kind)
+    record = store_game_art_record(game_key, record)
+    active_game_info = get_active_game_info()
+    return jsonify({"ok": True, "game": build_game_art_payload(record, active_game_key=active_game_info["game_key"] if active_game_info else None)})
+
+
+@app.route("/api/game-art/thumb/<game_key>/<filename>")
+def serve_game_art_thumb(game_key, filename):
+    record = get_game_art_record(game_key)
+    if not record:
+        return jsonify({"ok": False, "error": "Unknown game"}), 404
+    valid_filenames = set()
+    for singular, plural in (("hero", "heroes"), ("logo", "logos"), ("icon", "icons")):
+        for asset in record.get(plural, []):
+            asset_id = asset.get("id")
+            if not asset_id:
+                continue
+            if asset.get("thumb_filename"):
+                valid_filenames.add(asset.get("thumb_filename"))
+            valid_filenames.add(expected_thumb_filename(singular, asset_id, asset.get("thumb_url")))
+    if filename not in valid_filenames:
+        return jsonify({"ok": False, "error": "Unknown thumbnail"}), 404
+    return send_from_directory(GAME_ART_THUMB_DIR, filename)
+
+
+@app.route("/api/game-art/image/<game_key>/<filename>")
+def serve_game_art_image(game_key, filename):
+    record = get_game_art_record(game_key)
+    if not record:
+        return jsonify({"ok": False, "error": "Unknown game"}), 404
+    valid_filenames = set()
+    for singular, plural in (("hero", "heroes"), ("logo", "logos"), ("icon", "icons")):
+        for asset in record.get(plural, []):
+            asset_id = asset.get("id")
+            if not asset_id:
+                continue
+            if asset.get("image_filename"):
+                valid_filenames.add(asset.get("image_filename"))
+            valid_filenames.add(expected_asset_filename(singular, asset_id, asset.get("url")))
+    if filename not in valid_filenames:
+        return jsonify({"ok": False, "error": "Unknown image"}), 404
+    return send_from_directory(GAME_ART_IMAGE_DIR, filename)
 
 
 @app.route("/api/control/<action>", methods=["POST"])

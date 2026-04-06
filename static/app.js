@@ -61,10 +61,14 @@
         const diskStatElem = document.getElementById('disk-stat');
         const fpsCardElem = document.getElementById('fps-card');
         const fpsStatElem = document.getElementById('fps-stat');
+        const fpsGameNameElem = document.getElementById('fps-game-name');
+        const fpsGameIconElem = document.getElementById('fps-game-icon');
+        const fpsFallbackIconElem = document.getElementById('fps-fallback-icon');
         const cpuGaugeElem = document.getElementById('cpu-gauge');
         const gpuGaugeElem = document.getElementById('gpu-gauge');
         const ramFillElem = document.getElementById('ram-fill');
         const diskBarElem = document.getElementById('disk-bar');
+        let currentStatsGameArtUrl = '';
 
         function setGaugeValue(element, percent) {
             const circumference = 220;
@@ -115,6 +119,9 @@
                 lyrics_font_scale: Number(config.lyrics_font_scale) || 1,
                 album_art_scale: Number(config.album_art_scale) || 1,
                 active_lyric_scale: Number(config.active_lyric_scale) || 1.03,
+                stats_bg_blur: Number.isFinite(Number(config.stats_bg_blur)) ? Number(config.stats_bg_blur) : 1,
+                stats_bg_dim: Number.isFinite(Number(config.stats_bg_dim)) ? Number(config.stats_bg_dim) : 0.79,
+                stats_card_opacity: Number.isFinite(Number(config.stats_card_opacity)) ? Number(config.stats_card_opacity) : 0.36,
                 stats_theme: ['macchiato', 'mocha', 'graphite', 'aurora', 'slate'].includes(config.stats_theme) ? config.stats_theme : 'slate',
                 control_mode: config.control_mode === 'swipe' ? 'swipe' : 'buttons',
                 swipe_start_threshold: Number(config.swipe_start_threshold) || 6,
@@ -127,6 +134,9 @@
             document.documentElement.style.setProperty('--lyrics-font-scale', normalized.lyrics_font_scale);
             document.documentElement.style.setProperty('--album-art-scale', normalized.album_art_scale);
             document.documentElement.style.setProperty('--active-lyric-scale', normalized.active_lyric_scale);
+            document.documentElement.style.setProperty('--stats-bg-blur', `${Math.max(0, normalized.stats_bg_blur)}px`);
+            document.documentElement.style.setProperty('--stats-bg-dim', Math.max(0.45, Math.min(1, normalized.stats_bg_dim)));
+            document.documentElement.style.setProperty('--stats-card-opacity', Math.max(0.12, Math.min(0.72, normalized.stats_card_opacity)));
             currentControlMode = normalized.control_mode;
             currentStatsTheme = normalized.stats_theme;
             swipeStartThreshold = normalized.swipe_start_threshold;
@@ -502,6 +512,9 @@
             const ramTotalGb = Number(data.ram_total_gb) || 0;
             const fps = Number(data.fps);
             const showFps = Boolean(data.mangohud_active) && Number.isFinite(fps) && fps > 0;
+            const gameName = (data.game_name || '').trim();
+            const gameArtUrl = data.game_art?.selected_image_url || '';
+            const gameFpsAssetUrl = data.game_art?.fps_asset_url || data.game_art?.fps_asset_thumb_url || '';
 
             cpuStatElem.textContent = `${Math.round(cpu)}%`;
             gpuStatElem.textContent = `${Math.round(gpu)}%`;
@@ -511,6 +524,16 @@
                 : '--';
             diskStatElem.textContent = `${disk.toFixed(1)} MB/s`;
             fpsStatElem.textContent = showFps ? `${Math.round(fps)}` : '0';
+            fpsGameNameElem.textContent = showFps ? gameName : '';
+            if (showFps && gameFpsAssetUrl) {
+                fpsGameIconElem.setAttribute('src', gameFpsAssetUrl);
+                fpsGameIconElem.classList.remove('hidden');
+                fpsFallbackIconElem.classList.add('hidden');
+            } else {
+                fpsGameIconElem.removeAttribute('src');
+                fpsGameIconElem.classList.add('hidden');
+                fpsFallbackIconElem.classList.remove('hidden');
+            }
 
             const diskPct = Math.min(100, (disk / 500) * 100);
             
@@ -531,6 +554,12 @@
                 } else {
                     fpsCardElem.classList.add('is-bad');
                 }
+            }
+
+            if (currentStatsGameArtUrl !== gameArtUrl) {
+                currentStatsGameArtUrl = gameArtUrl;
+                document.documentElement.style.setProperty('--stats-game-art-image', gameArtUrl ? `url("${gameArtUrl}")` : 'none');
+                statsView.classList.toggle('has-game-art', Boolean(gameArtUrl));
             }
 
             updateTempBox('cpu-temp-box', 'cpu-temp-stat', data.cpu_temp);

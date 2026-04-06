@@ -28,6 +28,9 @@
             --stats-gpu-soft: rgba(138, 173, 244, 0.18);
             --stats-ram-soft: rgba(139, 213, 202, 0.18);
             --stats-disk-soft: rgba(245, 169, 127, 0.18);
+            --stats-bg-blur: 1px;
+            --stats-bg-dim: 0.79;
+            --stats-card-opacity: 0.36;
         }
 
         * {
@@ -558,6 +561,27 @@
                 radial-gradient(circle at top left, rgba(255, 255, 255, 0.04), transparent 30%),
                 radial-gradient(circle at bottom right, rgba(255, 255, 255, 0.03), transparent 34%),
                 linear-gradient(180deg, var(--stats-bg), color-mix(in srgb, var(--stats-bg) 82%, #000 18%));
+            position: relative;
+            isolation: isolate;
+        }
+
+        #stats-view::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background-image: var(--stats-game-art-image, none);
+            background-size: cover;
+            background-position: center;
+            opacity: 0;
+            filter: blur(var(--stats-bg-blur)) saturate(1.02) brightness(var(--stats-bg-dim));
+            transform: scale(1.005);
+            transition: opacity 320ms ease;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        #stats-view.has-game-art::before {
+            opacity: 0.76;
         }
 
         .stats-card-cpu {
@@ -593,7 +617,7 @@
             padding: 20px 22px;
             border-radius: 30px;
             border: 1px solid var(--stats-panel-border);
-            background: var(--stats-panel-strong);
+            background: color-mix(in srgb, var(--stats-panel-strong) calc(var(--stats-card-opacity) * 100%), transparent);
             display: flex;
             gap: 18px;
             min-width: 0;
@@ -603,7 +627,8 @@
             align-items: center;
             flex-direction: row;
             justify-content: flex-start;
-            box-shadow: 0 16px 32px rgba(0, 0, 0, 0.22);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.12);
+            z-index: 1;
         }
 
         .stats-card::before {
@@ -672,6 +697,10 @@
             gap: 14px;
         }
 
+        #stats-view.has-fps-card {
+            grid-template-columns: minmax(0, 0.94fr) minmax(0, 1.06fr);
+        }
+
         #stats-view.has-fps-card .stats-card-disk,
         #stats-view.has-fps-card .stats-card-fps {
             padding: 18px 18px;
@@ -689,6 +718,11 @@
             height: 48px;
         }
 
+        #stats-view.has-fps-card .stats-card-fps .stats-icon-big {
+            width: 72px;
+            height: 72px;
+        }
+
         #stats-view.has-fps-card .stats-card-disk .stats-value,
         #stats-view.has-fps-card .stats-card-fps .stats-value {
             font-size: clamp(2rem, 3.1vw, 2.8rem);
@@ -701,6 +735,22 @@
         #stats-view.has-fps-card .stats-card-disk .stats-right,
         #stats-view.has-fps-card .stats-card-fps .stats-right {
             gap: 8px;
+        }
+
+        #stats-view.has-fps-card .stats-card-fps .stats-left {
+            width: 80px;
+            min-width: 80px;
+        }
+
+        #stats-view.has-fps-card .stats-card-fps .stats-right {
+            align-items: center;
+            text-align: center;
+            padding-right: 8px;
+        }
+
+        #stats-view.has-fps-card .stats-card-fps .stats-subvalue {
+            width: 100%;
+            text-align: center;
         }
 
         #stats-view.has-fps-card .stats-card-disk .stats-bar {
@@ -725,6 +775,15 @@
             height: 58px;
             color: var(--stats-accent);
             filter: drop-shadow(0 10px 22px color-mix(in srgb, var(--stats-accent) 26%, transparent));
+        }
+
+        .fps-game-icon {
+            object-fit: contain;
+            border-radius: 16px;
+            border: none;
+            filter: none;
+            box-shadow: none;
+            background: transparent;
         }
 
         .stats-right {

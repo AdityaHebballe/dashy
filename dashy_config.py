@@ -1,31 +1,42 @@
 #!/usr/bin/env python3
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
 import threading
+from pathlib import Path
 from urllib import error, request
 
 import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, GLib, Gtk
+from gi.repository import Adw, Gdk, GLib, Gtk
 
 
 CONFIG_URL = "http://127.0.0.1:5000/api/config"
+GAME_ART_API_URL = "http://127.0.0.1:5000/api/game-art"
 ADB_BIN = shutil.which("adb") or "/usr/bin/adb"
 DDCUTIL_BIN = shutil.which("ddcutil") or "/usr/bin/ddcutil"
 PHONE_ADB_TARGET = "192.168.0.8:5555"
+LOCAL_CONFIG_DIR = Path.home() / ".config" / "dashy"
+ADMIN_CONFIG_PATH = LOCAL_CONFIG_DIR / "admin.json"
 DEFAULTS = {
     "lyrics_font_scale": 1.0,
     "album_art_scale": 1.0,
     "active_lyric_scale": 1.03,
+    "stats_bg_blur": 1.0,
+    "stats_bg_dim": 0.79,
+    "stats_card_opacity": 0.36,
     "control_mode": "buttons",
     "swipe_start_threshold": 6.0,
     "swipe_commit_threshold": 72.0,
     "stats_theme": "slate",
+}
+DEFAULT_ADMIN_CONFIG = {
+    "steamgriddb_api_key": "",
 }
 CONTROL_MODES = ("buttons", "swipe")
 CONTROL_MODE_LABELS = {
@@ -41,16 +52,80 @@ STATS_THEME_LABELS = {
     "slate": "Slate",
 }
 
+APP_CSS = """
+.dashy-compact-button {
+  min-height: 30px;
+  min-width: 30px;
+  padding: 4px 10px;
+}
 
-def http_json(url, method="GET", payload=None):
+.dashy-compact-icon {
+  min-height: 28px;
+  min-width: 28px;
+  padding: 4px;
+}
+
+.dashy-card {
+  background: alpha(@window_fg_color, 0.04);
+  border: 1px solid alpha(@window_fg_color, 0.08);
+  border-radius: 16px;
+  padding: 14px;
+}
+
+.dashy-tile-meta {
+  font-size: 0.92em;
+}
+"""
+
+
+def apply_app_css():
+    provider = Gtk.CssProvider()
+    provider.load_from_data(APP_CSS.encode("utf-8"))
+    Gtk.StyleContext.add_provider_for_display(
+        Gdk.Display.get_default(),
+        provider,
+        Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+    )
+
+
+def http_json(url, method="GET", payload=None, timeout=3):
     data = None
     headers = {}
     if payload is not None:
         data = json.dumps(payload).encode("utf-8")
         headers["Content-Type"] = "application/json"
     req = request.Request(url, method=method, data=data, headers=headers)
-    with request.urlopen(req, timeout=3) as response:
+    with request.urlopen(req, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def load_admin_config():
+    try:
+        with ADMIN_CONFIG_PATH.open("r", encoding="utf-8") as handle:
+            loaded = json.load(handle)
+    except FileNotFoundError:
+        return dict(DEFAULT_ADMIN_CONFIG)
+    except Exception:
+        return dict(DEFAULT_ADMIN_CONFIG)
+
+    if not isinstance(loaded, dict):
+        return dict(DEFAULT_ADMIN_CONFIG)
+    return {
+        "steamgriddb_api_key": (loaded.get("steamgriddb_api_key") or "").strip(),
+    }
+
+
+def save_admin_config(config):
+    LOCAL_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "steamgriddb_api_key": (config.get("steamgriddb_api_key") or "").strip(),
+    }
+    temp_path = ADMIN_CONFIG_PATH.with_suffix(".tmp")
+    with temp_path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
+        handle.flush()
+        os.fsync(handle.fileno())
+    temp_path.replace(ADMIN_CONFIG_PATH)
 
 
 def run_command(command, timeout=5):
@@ -136,13 +211,15 @@ class SliderRow(Adw.ActionRow):
 
         self.scale = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL, adjustment=self.adjustment)
         self.scale.set_hexpand(True)
-        self.scale.set_size_request(260, -1)
+        self.scale.set_size_request(220, -1)
         self.scale.set_digits(digits)
         self.scale.set_draw_value(True)
         self.scale.set_value_pos(Gtk.PositionType.RIGHT)
         box.append(self.scale)
 
         self.reset_button = Gtk.Button(icon_name="view-refresh-symbolic")
+        self.reset_button.add_css_class("flat")
+        self.reset_button.add_css_class("dashy-compact-icon")
         self.reset_button.set_tooltip_text("Reset this value")
         self.reset_button.set_valign(Gtk.Align.CENTER)
         self.reset_button.connect("clicked", self.on_reset_clicked)
@@ -185,13 +262,15 @@ class PhoneBrightnessRow(Adw.ActionRow):
 
         self.scale = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL, adjustment=self.adjustment)
         self.scale.set_hexpand(True)
-        self.scale.set_size_request(260, -1)
+        self.scale.set_size_request(220, -1)
         self.scale.set_digits(0)
         self.scale.set_draw_value(True)
         self.scale.set_value_pos(Gtk.PositionType.RIGHT)
         box.append(self.scale)
 
         self.refresh_button = Gtk.Button(icon_name="view-refresh-symbolic")
+        self.refresh_button.add_css_class("flat")
+        self.refresh_button.add_css_class("dashy-compact-icon")
         self.refresh_button.set_tooltip_text("Read the current phone brightness")
         self.refresh_button.set_valign(Gtk.Align.CENTER)
         box.append(self.refresh_button)
@@ -211,18 +290,381 @@ class PhoneBrightnessRow(Adw.ActionRow):
         self.refresh_button.set_sensitive(sensitive)
 
 
+class AssetTile(Gtk.Button):
+    def __init__(self, asset, width=220, height=130):
+        super().__init__()
+        self.asset = asset
+        self.set_valign(Gtk.Align.START)
+        self.add_css_class("flat")
+        self.add_css_class("dashy-card")
+        if asset.get("selected"):
+            self.add_css_class("suggested-action")
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.set_margin_top(6)
+        box.set_margin_bottom(6)
+        box.set_margin_start(6)
+        box.set_margin_end(6)
+
+        picture = Gtk.Picture()
+        picture.set_size_request(width, height)
+        picture.set_can_shrink(True)
+        asset_width = max(1, int(asset.get("width", 0) or 1))
+        asset_height = max(1, int(asset.get("height", 0) or 1))
+        aspect = asset_width / asset_height
+        picture.set_content_fit(Gtk.ContentFit.CONTAIN if aspect > 1.6 or abs(aspect - 1.0) < 0.2 else Gtk.ContentFit.COVER)
+        thumb_path = asset.get("thumb_path")
+        if thumb_path and Path(thumb_path).exists():
+            picture.set_filename(thumb_path)
+        box.append(picture)
+
+        meta = Gtk.Label(
+            label=f"{asset.get('width', 0)}x{asset.get('height', 0)}",
+            xalign=0,
+        )
+        meta.add_css_class("dim-label")
+        meta.add_css_class("dashy-tile-meta")
+        box.append(meta)
+        self.set_child(box)
+
+
+class GameArtManagerWindow(Adw.Window):
+    def __init__(self, parent_window, show_toast):
+        super().__init__(transient_for=parent_window, modal=False, title="Game Wallpapers")
+        self.set_default_size(1260, 860)
+        self.set_size_request(860, 640)
+        self.show_toast = show_toast
+        self.current_games = []
+        self.current_game = None
+        self.busy_count = 0
+
+        toolbar_view = Adw.ToolbarView()
+        self.set_content(toolbar_view)
+
+        header = Adw.HeaderBar()
+        toolbar_view.add_top_bar(header)
+        header.set_title_widget(Adw.WindowTitle(title="Game Wallpapers", subtitle="Match detected MangoHud games to SteamGridDB hero art"))
+
+        refresh_button = Gtk.Button(icon_name="view-refresh-symbolic")
+        refresh_button.add_css_class("flat")
+        refresh_button.add_css_class("dashy-compact-icon")
+        refresh_button.set_tooltip_text("Reload detected games and cached hero art")
+        refresh_button.connect("clicked", self.on_refresh_clicked)
+        header.pack_start(refresh_button)
+        self.refresh_button = refresh_button
+
+        self.spinner = Gtk.Spinner()
+        self.spinner.set_spinning(False)
+        header.pack_end(self.spinner)
+
+        paned = Gtk.Paned.new(Gtk.Orientation.HORIZONTAL)
+        paned.set_wide_handle(True)
+        paned.set_position(340)
+        toolbar_view.set_content(paned)
+
+        left_scroll = Gtk.ScrolledWindow()
+        left_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        paned.set_start_child(left_scroll)
+
+        self.games_list = Gtk.ListBox()
+        self.games_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self.games_list.add_css_class("boxed-list")
+        self.games_list.connect("row-selected", self.on_game_selected)
+        left_scroll.set_child(self.games_list)
+
+        right_scroll = Gtk.ScrolledWindow()
+        right_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        paned.set_end_child(right_scroll)
+
+        self.detail_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
+        self.detail_box.set_margin_top(18)
+        self.detail_box.set_margin_bottom(18)
+        self.detail_box.set_margin_start(18)
+        self.detail_box.set_margin_end(18)
+        right_scroll.set_child(self.detail_box)
+
+        self.title_label = Gtk.Label(xalign=0)
+        self.title_label.add_css_class("title-2")
+        self.detail_box.append(self.title_label)
+
+        self.match_label = Gtk.Label(xalign=0, wrap=True)
+        self.match_label.add_css_class("dim-label")
+        self.detail_box.append(self.match_label)
+
+        query_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        self.detail_box.append(query_row)
+
+        self.query_entry = Gtk.Entry()
+        self.query_entry.set_hexpand(True)
+        self.query_entry.set_placeholder_text("SteamGridDB lookup query")
+        query_row.append(self.query_entry)
+
+        self.refetch_button = Gtk.Button(label="Match")
+        self.refetch_button.add_css_class("dashy-compact-button")
+        self.refetch_button.connect("clicked", self.on_refetch_clicked)
+        query_row.append(self.refetch_button)
+
+        wallpaper_heading = Gtk.Label(label="Wallpaper", xalign=0)
+        wallpaper_heading.add_css_class("heading")
+        self.detail_box.append(wallpaper_heading)
+
+        self.selected_preview = Gtk.Picture()
+        self.selected_preview.set_size_request(720, 232)
+        self.selected_preview.set_can_shrink(True)
+        self.selected_preview.set_content_fit(Gtk.ContentFit.COVER)
+        self.detail_box.append(self.selected_preview)
+
+        self.heroes_flow = Gtk.FlowBox()
+        self.heroes_flow.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.heroes_flow.set_max_children_per_line(3)
+        self.heroes_flow.set_column_spacing(12)
+        self.heroes_flow.set_row_spacing(12)
+        self.detail_box.append(self.heroes_flow)
+
+        fps_heading = Gtk.Label(label="FPS Card Asset", xalign=0)
+        fps_heading.add_css_class("heading")
+        self.detail_box.append(fps_heading)
+
+        self.fps_preview = Gtk.Picture()
+        self.fps_preview.set_size_request(320, 160)
+        self.fps_preview.set_can_shrink(True)
+        self.fps_preview.set_content_fit(Gtk.ContentFit.CONTAIN)
+        self.detail_box.append(self.fps_preview)
+
+        logos_heading = Gtk.Label(label="Logos", xalign=0)
+        logos_heading.add_css_class("dim-label")
+        self.detail_box.append(logos_heading)
+
+        self.logos_flow = Gtk.FlowBox()
+        self.logos_flow.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.logos_flow.set_max_children_per_line(4)
+        self.logos_flow.set_column_spacing(12)
+        self.logos_flow.set_row_spacing(12)
+        self.detail_box.append(self.logos_flow)
+
+        icons_heading = Gtk.Label(label="Icons", xalign=0)
+        icons_heading.add_css_class("dim-label")
+        self.detail_box.append(icons_heading)
+
+        self.icons_flow = Gtk.FlowBox()
+        self.icons_flow.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.icons_flow.set_max_children_per_line(6)
+        self.icons_flow.set_column_spacing(12)
+        self.icons_flow.set_row_spacing(12)
+        self.detail_box.append(self.icons_flow)
+
+        self.load_games_async()
+
+    def set_busy(self, busy, subtitle=None):
+        self.busy_count = max(0, self.busy_count + (1 if busy else -1))
+        active = self.busy_count > 0
+        self.spinner.set_spinning(active)
+        self.refresh_button.set_sensitive(not active)
+        self.refetch_button.set_sensitive(not active and self.current_game is not None)
+        self.query_entry.set_sensitive(not active)
+        if subtitle is not None:
+            self.match_label.set_text(subtitle)
+
+    def show_placeholder(self, title="No game selected", subtitle="Pick a detected game from the list to manage its wallpaper."):
+        self.title_label.set_text(title)
+        self.match_label.set_text(subtitle)
+        self.query_entry.set_text("")
+        self.selected_preview.set_visible(False)
+        self.fps_preview.set_visible(False)
+        for flow in (self.heroes_flow, self.logos_flow, self.icons_flow):
+            child = flow.get_first_child()
+            while child:
+                next_child = child.get_next_sibling()
+                flow.remove(child)
+                child = next_child
+
+    def load_games_async(self):
+        self.set_busy(True, "Reading detected MangoHud games and cached artwork.")
+        self.show_placeholder("Loading games…", "Reading detected MangoHud games and cached artwork.")
+
+        def worker():
+            try:
+                payload = http_json(f"{GAME_ART_API_URL}/games", timeout=10)
+            except Exception as exc:
+                GLib.idle_add(self.on_games_loaded, None, str(exc))
+                return
+            GLib.idle_add(self.on_games_loaded, payload, None)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def on_games_loaded(self, payload, error_message):
+        self.set_busy(False)
+        child = self.games_list.get_first_child()
+        while child:
+            next_child = child.get_next_sibling()
+            self.games_list.remove(child)
+            child = next_child
+
+        if error_message:
+            self.show_placeholder("Could not load games", error_message)
+            return False
+
+        self.current_games = payload.get("games", [])
+        active_key = payload.get("active_game_key")
+
+        for game in self.current_games:
+            subtitle = game.get("matched_game_name") or "No SteamGridDB match yet"
+            if game.get("active"):
+                subtitle = f"Active now • {subtitle}"
+            row = Adw.ActionRow(title=game.get("display_name") or game.get("game_key"), subtitle=subtitle)
+            row.game_payload = game
+            if game.get("selected_thumb_path"):
+                thumb = Gtk.Picture()
+                thumb.set_size_request(92, 52)
+                thumb.set_content_fit(Gtk.ContentFit.COVER)
+                thumb.set_filename(game.get("selected_thumb_path"))
+                row.add_prefix(thumb)
+            self.games_list.append(row)
+
+        if not self.current_games:
+            self.show_placeholder("No games yet", "Launch a MangoHud-enabled game to populate the wallpaper cache.")
+            return False
+
+        selected_row = None
+        row = self.games_list.get_first_child()
+        while row:
+            if getattr(row, "game_payload", {}).get("game_key") == active_key:
+                selected_row = row
+                break
+            row = row.get_next_sibling()
+        if selected_row is None:
+            selected_row = self.games_list.get_first_child()
+        self.games_list.select_row(selected_row)
+        return False
+
+    def on_game_selected(self, _listbox, row):
+        if row is None:
+            self.current_game = None
+            self.show_placeholder()
+            return
+
+        game = row.game_payload
+        self.current_game = game
+        self.title_label.set_text(game.get("display_name") or game.get("game_key"))
+        matched = game.get("matched_game_name") or "No SteamGridDB match yet"
+        self.match_label.set_text(f"Current match: {matched}")
+        self.query_entry.set_text(game.get("lookup_query") or game.get("display_name") or "")
+
+        wallpaper_path = game.get("selected_image_path")
+        if wallpaper_path and Path(wallpaper_path).exists():
+            self.selected_preview.set_filename(wallpaper_path)
+            self.selected_preview.set_visible(True)
+        else:
+            self.selected_preview.set_visible(False)
+
+        fps_path = game.get("fps_asset_path") or game.get("selected_logo_path") or game.get("selected_icon_path")
+        if fps_path and Path(fps_path).exists():
+            self.fps_preview.set_filename(fps_path)
+            self.fps_preview.set_visible(True)
+        else:
+            self.fps_preview.set_visible(False)
+
+        for flow in (self.heroes_flow, self.logos_flow, self.icons_flow):
+            child = flow.get_first_child()
+            while child:
+                next_child = child.get_next_sibling()
+                flow.remove(child)
+                child = next_child
+
+        for hero in game.get("heroes", []):
+            tile = AssetTile(hero, width=220, height=130)
+            tile.connect("clicked", self.on_asset_clicked, "hero", hero.get("id"))
+            self.heroes_flow.insert(tile, -1)
+
+        for logo in game.get("logos", []):
+            tile = AssetTile(logo, width=140, height=140)
+            tile.connect("clicked", self.on_asset_clicked, "logo", logo.get("id"))
+            self.logos_flow.insert(tile, -1)
+
+        for icon in game.get("icons", []):
+            tile = AssetTile(icon, width=108, height=108)
+            tile.connect("clicked", self.on_asset_clicked, "icon", icon.get("id"))
+            self.icons_flow.insert(tile, -1)
+
+    def on_refresh_clicked(self, _button):
+        self.load_games_async()
+
+    def on_refetch_clicked(self, _button):
+        if not self.current_game:
+            return
+        query = self.query_entry.get_text().strip()
+        game_key = self.current_game.get("game_key")
+        self.set_busy(True, "Refreshing SteamGridDB match…")
+
+        def worker():
+            try:
+                http_json(f"{GAME_ART_API_URL}/refresh", method="POST", payload={"game_key": game_key, "query": query}, timeout=30)
+            except Exception as exc:
+                GLib.idle_add(self.on_refresh_failed, str(exc))
+                return
+            GLib.idle_add(self.on_refresh_success)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def on_refresh_success(self):
+        self.set_busy(False)
+        self.show_toast("Wallpaper candidates refreshed.")
+        self.load_games_async()
+        return False
+
+    def on_refresh_failed(self, message):
+        self.set_busy(False)
+        self.show_toast(f"Game-art refresh failed: {message}")
+        self.match_label.set_text(f"Refresh failed: {message}")
+        return False
+
+    def on_asset_clicked(self, _button, asset_kind, asset_id):
+        if not self.current_game:
+            return
+        game_key = self.current_game.get("game_key")
+        self.set_busy(True, f"Applying {asset_kind} selection…")
+
+        def worker():
+            try:
+                http_json(
+                    f"{GAME_ART_API_URL}/select",
+                    method="POST",
+                    payload={"game_key": game_key, "hero_id": asset_id, "asset_kind": asset_kind},
+                    timeout=20,
+                )
+            except Exception as exc:
+                GLib.idle_add(self.on_select_failed, str(exc))
+                return
+            GLib.idle_add(self.on_select_success)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def on_select_success(self):
+        self.set_busy(False)
+        self.show_toast("Wallpaper updated.")
+        self.load_games_async()
+        return False
+
+    def on_select_failed(self, message):
+        self.set_busy(False)
+        self.show_toast(f"Could not apply wallpaper: {message}")
+        return False
+
+
 class DashyConfigWindow(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="Dashy Config")
-        self.set_default_size(1000, 1000)
+        self.set_default_size(900, 760)
         self.set_resizable(True)
-        self.set_size_request(1000, 1000)
+        self.set_size_request(760, 620)
         self.phone_brightness_source_id = 0
         self.phone_brightness_programmatic = False
         self.phone_request_in_flight = False
         self.phone_connected = False
         self.pending_phone_brightness = None
         self.monitor_match_in_flight = False
+        self.admin_config = load_admin_config()
+        self.game_art_window = None
 
         self.toast_overlay = Adw.ToastOverlay()
         self.set_content(self.toast_overlay)
@@ -237,11 +679,14 @@ class DashyConfigWindow(Adw.ApplicationWindow):
         header.set_title_widget(title_widget)
 
         refresh_button = Gtk.Button(icon_name="view-refresh-symbolic")
+        refresh_button.add_css_class("flat")
+        refresh_button.add_css_class("dashy-compact-icon")
         refresh_button.set_tooltip_text("Reload current config")
         refresh_button.connect("clicked", self.on_refresh)
         header.pack_start(refresh_button)
 
         apply_button = Gtk.Button(label="Apply")
+        apply_button.add_css_class("dashy-compact-button")
         apply_button.add_css_class("suggested-action")
         apply_button.connect("clicked", self.on_apply)
         header.pack_end(apply_button)
@@ -250,8 +695,13 @@ class DashyConfigWindow(Adw.ApplicationWindow):
         content.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         toolbar_view.set_content(content)
 
+        clamp = Adw.Clamp()
+        clamp.set_maximum_size(860)
+        clamp.set_tightening_threshold(720)
+        content.set_child(clamp)
+
         page = Adw.PreferencesPage()
-        content.set_child(page)
+        clamp.set_child(page)
 
         display_group = Adw.PreferencesGroup(
             title="Display",
@@ -304,6 +754,78 @@ class DashyConfigWindow(Adw.ApplicationWindow):
         self.stats_theme_model = Gtk.StringList.new([STATS_THEME_LABELS[theme] for theme in STATS_THEMES])
         self.stats_theme_row.set_model(self.stats_theme_model)
         stats_group.add(self.stats_theme_row)
+
+        self.stats_blur_row = SliderRow(
+            "stats_bg_blur",
+            "Background Blur",
+            "Controls how soft the game-art background looks in the stats view.",
+            0.0,
+            12.0,
+            0.5,
+            DEFAULTS["stats_bg_blur"],
+            digits=1,
+        )
+        stats_group.add(self.stats_blur_row)
+
+        self.stats_dim_row = SliderRow(
+            "stats_bg_dim",
+            "Background Brightness",
+            "Higher values brighten the game-art background; lower values darken it.",
+            0.45,
+            1.0,
+            0.01,
+            DEFAULTS["stats_bg_dim"],
+            digits=2,
+        )
+        stats_group.add(self.stats_dim_row)
+
+        self.stats_card_opacity_row = SliderRow(
+            "stats_card_opacity",
+            "Card Opacity",
+            "Controls how strongly the stats cards cover the game-art background.",
+            0.12,
+            0.72,
+            0.01,
+            DEFAULTS["stats_card_opacity"],
+            digits=2,
+        )
+        stats_group.add(self.stats_card_opacity_row)
+
+        game_art_group = Adw.PreferencesGroup(
+            title="Game Art",
+            description="SteamGridDB-backed game wallpaper matching for the stats page and FPS card.",
+        )
+        page.add(game_art_group)
+
+        self.sgdb_key_row = Adw.ActionRow(
+            title="SteamGridDB API Key",
+            subtitle="Stored locally on this PC only. Dashy uses it to match MangoHud-detected games to hero artwork.",
+        )
+        sgdb_key_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        sgdb_key_box.set_hexpand(True)
+        self.sgdb_key_entry = Gtk.Entry()
+        self.sgdb_key_entry.set_hexpand(True)
+        self.sgdb_key_entry.set_placeholder_text("Enter SteamGridDB API key")
+        self.sgdb_key_entry.set_text(self.admin_config.get("steamgriddb_api_key", ""))
+        sgdb_key_box.append(self.sgdb_key_entry)
+        sgdb_save_button = Gtk.Button(label="Save")
+        sgdb_save_button.add_css_class("dashy-compact-button")
+        sgdb_save_button.connect("clicked", self.on_save_sgdb_key)
+        sgdb_key_box.append(sgdb_save_button)
+        self.sgdb_key_row.add_suffix(sgdb_key_box)
+        self.sgdb_key_row.set_activatable(False)
+        game_art_group.add(self.sgdb_key_row)
+
+        manage_art_row = Adw.ActionRow(
+            title="Manage Game Wallpapers",
+            subtitle="Review detected games, fix bad matches, and choose a different cached hero image per game.",
+        )
+        manage_art_button = Gtk.Button(label="Open")
+        manage_art_button.add_css_class("dashy-compact-button")
+        manage_art_button.connect("clicked", self.on_open_game_art_manager)
+        manage_art_row.add_suffix(manage_art_button)
+        manage_art_row.set_activatable(False)
+        game_art_group.add(manage_art_row)
 
         controls_group = Adw.PreferencesGroup(
             title="Controls",
@@ -369,7 +891,8 @@ class DashyConfigWindow(Adw.ApplicationWindow):
             title="Match Phone To Monitor",
             subtitle="Reads monitor brightness with ddcutil and applies the equivalent brightness to the phone.",
         )
-        self.monitor_match_button = Gtk.Button(label="Match Now")
+        self.monitor_match_button = Gtk.Button(label="Match")
+        self.monitor_match_button.add_css_class("dashy-compact-button")
         self.monitor_match_button.connect("clicked", self.on_match_monitor_brightness)
         self.monitor_match_row.add_suffix(self.monitor_match_button)
         self.monitor_match_row.set_activatable(False)
@@ -383,6 +906,7 @@ class DashyConfigWindow(Adw.ApplicationWindow):
             subtitle="Restore the default visual sizes and the button-based control scheme.",
         )
         reset_button = Gtk.Button(label="Reset")
+        reset_button.add_css_class("dashy-compact-button")
         reset_button.connect("clicked", self.on_reset)
         reset_row.add_suffix(reset_button)
         reset_row.set_activatable(False)
@@ -401,6 +925,9 @@ class DashyConfigWindow(Adw.ApplicationWindow):
             "lyrics_font_scale": self.lyrics_row.get_value(),
             "album_art_scale": self.album_row.get_value(),
             "active_lyric_scale": self.highlight_row.get_value(),
+            "stats_bg_blur": self.stats_blur_row.get_value(),
+            "stats_bg_dim": self.stats_dim_row.get_value(),
+            "stats_card_opacity": self.stats_card_opacity_row.get_value(),
             "stats_theme": STATS_THEMES[self.stats_theme_row.get_selected()] if 0 <= self.stats_theme_row.get_selected() < len(STATS_THEMES) else DEFAULTS["stats_theme"],
             "control_mode": control_mode,
             "swipe_start_threshold": self.swipe_start_row.get_value(),
@@ -411,6 +938,9 @@ class DashyConfigWindow(Adw.ApplicationWindow):
         self.lyrics_row.set_value(config.get("lyrics_font_scale", DEFAULTS["lyrics_font_scale"]))
         self.album_row.set_value(config.get("album_art_scale", DEFAULTS["album_art_scale"]))
         self.highlight_row.set_value(config.get("active_lyric_scale", DEFAULTS["active_lyric_scale"]))
+        self.stats_blur_row.set_value(config.get("stats_bg_blur", DEFAULTS["stats_bg_blur"]))
+        self.stats_dim_row.set_value(config.get("stats_bg_dim", DEFAULTS["stats_bg_dim"]))
+        self.stats_card_opacity_row.set_value(config.get("stats_card_opacity", DEFAULTS["stats_card_opacity"]))
         stats_theme = config.get("stats_theme", DEFAULTS["stats_theme"])
         if stats_theme not in STATS_THEMES:
             stats_theme = DEFAULTS["stats_theme"]
@@ -452,8 +982,29 @@ class DashyConfigWindow(Adw.ApplicationWindow):
         self.write_ui(DEFAULTS)
         self.on_apply(_button)
 
+    def on_save_sgdb_key(self, _button):
+        self.admin_config["steamgriddb_api_key"] = self.sgdb_key_entry.get_text().strip()
+        try:
+            save_admin_config(self.admin_config)
+        except Exception as exc:
+            self.show_toast(f"Could not save SteamGridDB key: {exc}")
+            return
+        self.show_toast("SteamGridDB key saved locally.")
+
+    def on_open_game_art_manager(self, _button):
+        if self.game_art_window is None:
+            self.game_art_window = GameArtManagerWindow(self, self.show_toast)
+            self.game_art_window.connect("close-request", self.on_game_art_window_closed)
+        self.game_art_window.present()
+
+    def on_game_art_window_closed(self, _window):
+        self.game_art_window = None
+        return False
+
     def on_refresh(self, _button):
         self.load_current_config()
+        self.admin_config = load_admin_config()
+        self.sgdb_key_entry.set_text(self.admin_config.get("steamgriddb_api_key", ""))
         self.refresh_phone_brightness()
 
     def on_control_mode_changed(self, _row, _pspec):
@@ -611,6 +1162,7 @@ class DashyConfigApp(Adw.Application):
         super().__init__(application_id="local.dashy.config")
 
     def do_activate(self):
+        apply_app_css()
         window = self.props.active_window
         if window is None:
             window = DashyConfigWindow(self)

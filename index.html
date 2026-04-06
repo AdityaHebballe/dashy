@@ -111,10 +111,12 @@
                     <div class="stats-card stats-card-fps hidden" id="fps-card" aria-hidden="true">
                         <div class="stats-left">
                             <div class="stats-label">FPS</div>
-                            <svg class="stats-icon-big" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19a9 9 0 1 1 14 0"></path><path d="M12 13l5-3"></path></svg>
+                            <img class="stats-icon-big fps-game-icon hidden" id="fps-game-icon" alt="Game icon">
+                            <svg class="stats-icon-big" id="fps-fallback-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19a9 9 0 1 1 14 0"></path><path d="M12 13l5-3"></path></svg>
                         </div>
                         <div class="stats-right">
                             <div class="stats-value" id="fps-stat">0</div>
+                            <div class="stats-subvalue" id="fps-game-name"></div>
                         </div>
                     </div>
                 </div>
