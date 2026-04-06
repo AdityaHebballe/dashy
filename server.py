@@ -111,14 +111,18 @@ GAME_ART_REFRESH_BACKOFF_SECONDS = int(os.getenv("DASHY_GAME_ART_REFRESH_BACKOFF
 GAME_ART_LAST_SEEN_WRITE_SECONDS = int(os.getenv("DASHY_GAME_ART_LAST_SEEN_WRITE_SECONDS", "300"))
 GAME_ART_HERO_LIMIT = int(os.getenv("DASHY_GAME_ART_HERO_LIMIT", "8"))
 GAME_ART_LOGO_LIMIT = int(os.getenv("DASHY_GAME_ART_LOGO_LIMIT", "10"))
-GAME_ART_ICON_LIMIT = int(os.getenv("DASHY_GAME_ART_ICON_LIMIT", "12"))
 next_mangohud_cleanup_at = 0.0
 mangohud_last_probe_at = 0.0
 mangohud_next_probe_delay = MANGOHUD_IDLE_POLL_SECONDS
 mangohud_last_fps_value = None
 mangohud_last_game_info = None
 last_primed_game_key = None
+cached_mangohud_log_path = None
+cached_mangohud_log_mtime = 0.0
+next_mangohud_rescan_at = 0.0
 next_game_art_cleanup_at = 0.0
+game_art_state_generation = 0
+game_art_games_cache = {"generation": -1, "active_game_key": None, "payload": None}
 
 # Init non-blocking CPU check
 psutil.cpu_percent(interval=None)
@@ -213,7 +217,6 @@ def normalize_admin_config(candidate):
             "matched_game_id": int(override.get("matched_game_id") or 0) or None,
             "selected_hero_id": int(override.get("selected_hero_id") or 0) or None,
             "selected_logo_id": int(override.get("selected_logo_id") or 0) or None,
-            "selected_icon_id": int(override.get("selected_icon_id") or 0) or None,
         }
 
     return {
@@ -278,7 +281,7 @@ def get_admin_config():
 
 
 def update_admin_overrides(game_key, partial_override):
-    global admin_config_mtime
+    global admin_config_mtime, game_art_state_generation
 
     load_admin_config_if_needed()
     with admin_config_lock:
@@ -295,6 +298,7 @@ def update_admin_overrides(game_key, partial_override):
             admin_config_mtime = ADMIN_CONFIG_PATH.stat().st_mtime
         except FileNotFoundError:
             admin_config_mtime = 0.0
+        game_art_state_generation += 1
         return dict(overrides[game_key])
 
 
@@ -396,10 +400,8 @@ def normalize_game_art_record(record):
         "matched_game_name": record.get("matched_game_name"),
         "selected_hero_id": int(record.get("selected_hero_id") or 0) or None,
         "selected_logo_id": int(record.get("selected_logo_id") or 0) or None,
-        "selected_icon_id": int(record.get("selected_icon_id") or 0) or None,
         "heroes": normalize_assets(record.get("heroes", []), "alternate"),
         "logos": normalize_assets(record.get("logos", []), "official"),
-        "icons": normalize_assets(record.get("icons", []), "official"),
         "updated_at": float(record.get("updated_at") or 0),
         "last_seen_at": float(record.get("last_seen_at") or 0),
     }
@@ -419,13 +421,12 @@ def asset_collection_name(asset_kind):
     return {
         "hero": "heroes",
         "logo": "logos",
-        "icon": "icons",
     }[asset_kind]
 
 
 def hydrate_asset_filenames(record):
     changed = False
-    for asset_kind in ("hero", "logo", "icon"):
+    for asset_kind in ("hero", "logo"):
         assets = record.get(asset_collection_name(asset_kind), [])
         for asset in assets:
             asset_id = asset.get("id")
@@ -544,11 +545,6 @@ def get_game_art_record(game_key):
         path.unlink(missing_ok=True)
         return None
 
-    try:
-        os.utime(path, None)
-    except Exception:
-        pass
-
     record = normalize_game_art_record(raw)
     if hydrate_asset_filenames(record):
         store_game_art_record(game_key, record)
@@ -556,6 +552,7 @@ def get_game_art_record(game_key):
 
 
 def store_game_art_record(game_key, record):
+    global game_art_state_generation
     record_path = build_game_art_record_path(game_key)
     record_payload = normalize_game_art_record(record)
     stored = {
@@ -578,6 +575,7 @@ def store_game_art_record(game_key, record):
         except Exception:
             pass
     cleanup_game_art_cache()
+    game_art_state_generation += 1
     return record_payload
 
 
@@ -937,10 +935,29 @@ def cleanup_mangohud_logs(force=False):
 
 
 def get_latest_mangohud_log(now=None):
+    global cached_mangohud_log_path, cached_mangohud_log_mtime, next_mangohud_rescan_at
     now = now or time.time()
     try:
         if not MANGOHUD_LOG_DIR.is_dir():
             return None
+
+        if cached_mangohud_log_path is not None and now < next_mangohud_rescan_at:
+            try:
+                stat = cached_mangohud_log_path.stat()
+                if stat.st_mtime >= cached_mangohud_log_mtime:
+                    cached_mangohud_log_mtime = stat.st_mtime
+                if (now - cached_mangohud_log_mtime) <= MANGOHUD_FPS_STALE_SECONDS:
+                    display_name = extract_mangohud_game_name(cached_mangohud_log_path.stem)
+                    return {
+                        "path": cached_mangohud_log_path,
+                        "mtime": cached_mangohud_log_mtime,
+                        "raw_name": cached_mangohud_log_path.stem,
+                        "display_name": display_name,
+                        "game_key": slugify_text(display_name),
+                    }
+            except OSError:
+                cached_mangohud_log_path = None
+                cached_mangohud_log_mtime = 0.0
 
         latest_path = None
         latest_mtime = 0.0
@@ -958,8 +975,14 @@ def get_latest_mangohud_log(now=None):
                 latest_path = path
 
         if latest_path is None or (now - latest_mtime) > MANGOHUD_FPS_STALE_SECONDS:
+            cached_mangohud_log_path = None
+            cached_mangohud_log_mtime = 0.0
+            next_mangohud_rescan_at = now + MANGOHUD_IDLE_POLL_SECONDS
             return None
 
+        cached_mangohud_log_path = latest_path
+        cached_mangohud_log_mtime = latest_mtime
+        next_mangohud_rescan_at = now + 3.0
         display_name = extract_mangohud_game_name(latest_path.stem)
         return {
             "path": latest_path,
@@ -1106,9 +1129,8 @@ def fetch_sgdb_assets(game_info, query=None, forced_game_id=None):
 
     heroes = fetch_sgdb_asset_group(match, "heroes", "thumb-hero", "hero", GAME_ART_HERO_LIMIT, "alternate")
     logos = fetch_sgdb_asset_group(match, "logos", "thumb-logo", "logo", GAME_ART_LOGO_LIMIT, "official")
-    icons = fetch_sgdb_asset_group(match, "icons", "thumb-icon", "icon", GAME_ART_ICON_LIMIT, "official")
 
-    if not heroes and not logos and not icons:
+    if not heroes and not logos:
         return None
 
     return {
@@ -1117,7 +1139,6 @@ def fetch_sgdb_assets(game_info, query=None, forced_game_id=None):
         "matched_game_name": match["name"],
         "heroes": heroes,
         "logos": logos,
-        "icons": icons,
     }
 
 
@@ -1158,7 +1179,6 @@ def ensure_selected_asset_download(record, asset_kind):
 def ensure_selected_game_art_download(record):
     ensure_selected_asset_download(record, "hero")
     ensure_selected_asset_download(record, "logo")
-    ensure_selected_asset_download(record, "icon")
     return record
 
 
@@ -1182,15 +1202,9 @@ def refresh_game_art_record(game_info, query=None, forced_game_id=None):
     if logo_ids and selected_logo_id not in logo_ids:
         selected_logo_id = fetch_result["logos"][0]["id"]
 
-    selected_icon_id = override.get("selected_icon_id")
-    icon_ids = {icon["id"] for icon in fetch_result["icons"]}
-    if icon_ids and selected_icon_id not in icon_ids:
-        selected_icon_id = fetch_result["icons"][0]["id"]
-
     update_admin_overrides(game_info["game_key"], {
         "selected_hero_id": selected_hero_id,
         "selected_logo_id": selected_logo_id,
-        "selected_icon_id": selected_icon_id,
     })
 
     record = {
@@ -1202,18 +1216,14 @@ def refresh_game_art_record(game_info, query=None, forced_game_id=None):
         "matched_game_name": fetch_result["matched_game_name"],
         "selected_hero_id": selected_hero_id,
         "selected_logo_id": selected_logo_id,
-        "selected_icon_id": selected_icon_id,
         "heroes": fetch_result["heroes"],
         "logos": fetch_result["logos"],
-        "icons": fetch_result["icons"],
         "last_seen_at": time.time(),
     }
     for hero in record["heroes"]:
         ensure_asset_download(record, "hero", asset_id=hero["id"], include_image=False)
     for logo in record["logos"]:
         ensure_asset_download(record, "logo", asset_id=logo["id"], include_image=False)
-    for icon in record["icons"]:
-        ensure_asset_download(record, "icon", asset_id=icon["id"], include_image=False)
     ensure_selected_game_art_download(record)
     return store_game_art_record(game_info["game_key"], record)
 
@@ -1266,11 +1276,6 @@ def maybe_prime_game_art(game_info, now=None):
             if selected_logo and not selected_logo.get("image_filename"):
                 record = ensure_selected_game_art_download(record)
                 should_store = True
-        if record.get("selected_icon_id"):
-            selected_icon = next((icon for icon in record.get("icons", []) if icon.get("id") == record.get("selected_icon_id")), None)
-            if selected_icon and not selected_icon.get("image_filename"):
-                record = ensure_selected_game_art_download(record)
-                should_store = True
         if (now - float(record.get("last_seen_at") or 0.0)) >= GAME_ART_LAST_SEEN_WRITE_SECONDS:
             record["last_seen_at"] = now
             should_store = True
@@ -1318,8 +1323,6 @@ def build_game_art_payload(record, active_game_key=None):
     if not record:
         return None
 
-    record = ensure_selected_game_art_download(record)
-
     def build_assets(asset_kind):
         selected_asset = None
         assets = []
@@ -1344,8 +1347,6 @@ def build_game_art_payload(record, active_game_key=None):
 
     selected_hero, heroes = build_assets("hero")
     selected_logo, logos = build_assets("logo")
-    selected_icon, icons = build_assets("icon")
-
     override = get_game_art_override(record["game_key"])
     return {
         "game_key": record.get("game_key"),
@@ -1356,7 +1357,6 @@ def build_game_art_payload(record, active_game_key=None):
         "matched_game_name": record.get("matched_game_name"),
         "selected_hero_id": record.get("selected_hero_id"),
         "selected_logo_id": record.get("selected_logo_id"),
-        "selected_icon_id": record.get("selected_icon_id"),
         "selected_image_url": selected_hero.get("image_url") if selected_hero else None,
         "selected_thumb_url": selected_hero.get("thumb_url") if selected_hero else None,
         "selected_image_path": selected_hero.get("image_path") if selected_hero else None,
@@ -1365,16 +1365,11 @@ def build_game_art_payload(record, active_game_key=None):
         "selected_logo_thumb_url": selected_logo.get("thumb_url") if selected_logo else None,
         "selected_logo_path": selected_logo.get("image_path") if selected_logo else None,
         "selected_logo_thumb_path": selected_logo.get("thumb_path") if selected_logo else None,
-        "selected_icon_url": selected_icon.get("image_url") if selected_icon else None,
-        "selected_icon_thumb_url": selected_icon.get("thumb_url") if selected_icon else None,
-        "selected_icon_path": selected_icon.get("image_path") if selected_icon else None,
-        "selected_icon_thumb_path": selected_icon.get("thumb_path") if selected_icon else None,
-        "fps_asset_url": (selected_logo.get("image_url") if selected_logo else None) or (selected_icon.get("image_url") if selected_icon else None),
-        "fps_asset_thumb_url": (selected_logo.get("thumb_url") if selected_logo else None) or (selected_icon.get("thumb_url") if selected_icon else None),
-        "fps_asset_path": (selected_logo.get("image_path") if selected_logo else None) or (selected_icon.get("image_path") if selected_icon else None),
+        "fps_asset_url": selected_logo.get("image_url") if selected_logo else None,
+        "fps_asset_thumb_url": selected_logo.get("thumb_url") if selected_logo else None,
+        "fps_asset_path": selected_logo.get("image_path") if selected_logo else None,
         "heroes": heroes,
         "logos": logos,
-        "icons": icons,
         "active": record.get("game_key") == active_game_key,
         "last_seen_at": record.get("last_seen_at"),
     }
@@ -1728,7 +1723,7 @@ def build_stats_payload():
     with stats_lock:
         cpu_value = stats_cache["cpu"]["value"]
     fps_value = get_cached_stat("fps", get_mangohud_fps, now)
-    game_info = get_active_game_info() if fps_value is not None else None
+    game_info = get_active_game_info()
     game_art = None
     if game_info:
         record = get_game_art_record(game_info["game_key"])
@@ -1748,7 +1743,7 @@ def build_stats_payload():
         "gpu_temp": get_cached_stat("gpu_temp", get_gpu_temp, now),
         "disk": get_cached_stat("disk", get_main_disk_usage, now),
         "fps": fps_value,
-        "mangohud_active": fps_value is not None,
+        "mangohud_active": game_info is not None,
         "game_name": game_info["display_name"] if game_info else None,
         "game_key": game_info["game_key"] if game_info else None,
         "game_art": game_art,
@@ -1782,15 +1777,23 @@ def dashboard_data():
             return jsonify(build_stats_payload())
 
         should_start_lyrics_job = False
+        cached_payload = None
         with lyrics_lock:
-            if track_id != current_track_id:
+            track_changed = track_id != current_track_id
+            if track_changed:
                 current_track_id = track_id
                 cached_lyrics_payload = {"text": "", "is_synced": False, "source": None}
-                cached_payload = get_cached_lyrics(track_id)
-                if cached_payload is not None:
-                    cached_lyrics_payload = cached_payload
-                else:
-                    should_start_lyrics_job = True
+            else:
+                track_changed = False
+
+        if track_changed:
+            cached_payload = get_cached_lyrics(track_id)
+            with lyrics_lock:
+                if track_id == current_track_id:
+                    if cached_payload is not None:
+                        cached_lyrics_payload = cached_payload
+                    else:
+                        should_start_lyrics_job = True
 
         if should_start_lyrics_job:
             t = threading.Thread(target=update_lyrics_background, args=(
@@ -1841,8 +1844,16 @@ def config_data():
 
 @app.route("/api/game-art/games", methods=["GET"])
 def game_art_games():
+    global game_art_games_cache
     active_game_info = get_active_game_info()
     active_game_key = active_game_info["game_key"] if active_game_info else None
+    cache_entry = game_art_games_cache
+    if (
+        cache_entry["generation"] == game_art_state_generation
+        and cache_entry["active_game_key"] == active_game_key
+        and cache_entry["payload"] is not None
+    ):
+        return jsonify(cache_entry["payload"])
     records = [build_game_art_payload(record, active_game_key=active_game_key) for record in get_all_game_art_records()]
     records = [record for record in records if record is not None]
     if active_game_info and all(record["game_key"] != active_game_key for record in records):
@@ -1856,7 +1867,6 @@ def game_art_games():
             "matched_game_name": None,
             "selected_hero_id": override.get("selected_hero_id"),
             "selected_logo_id": override.get("selected_logo_id"),
-            "selected_icon_id": override.get("selected_icon_id"),
             "selected_image_url": None,
             "selected_thumb_url": None,
             "selected_image_path": None,
@@ -1865,26 +1875,27 @@ def game_art_games():
             "selected_logo_thumb_url": None,
             "selected_logo_path": None,
             "selected_logo_thumb_path": None,
-            "selected_icon_url": None,
-            "selected_icon_thumb_url": None,
-            "selected_icon_path": None,
-            "selected_icon_thumb_path": None,
             "fps_asset_url": None,
             "fps_asset_thumb_url": None,
             "fps_asset_path": None,
             "heroes": [],
             "logos": [],
-            "icons": [],
             "active": True,
             "last_seen_at": active_game_info["mtime"],
         })
-    return jsonify({
+    payload = {
         "ok": True,
         "has_api_key": bool(get_admin_config().get("steamgriddb_api_key")),
         "active_game_key": active_game_key,
         "active_game_name": active_game_info["display_name"] if active_game_info else None,
         "games": records,
-    })
+    }
+    game_art_games_cache = {
+        "generation": game_art_state_generation,
+        "active_game_key": active_game_key,
+        "payload": payload,
+    }
+    return jsonify(payload)
 
 
 @app.route("/api/game-art/refresh", methods=["POST"])
@@ -1931,8 +1942,8 @@ def select_game_art():
     game_key = payload.get("game_key")
     hero_id = int(payload.get("hero_id") or 0) or None
     asset_kind = (payload.get("asset_kind") or "hero").strip().lower()
-    if asset_kind not in {"hero", "logo", "icon"}:
-        return jsonify({"ok": False, "error": "Expected asset_kind to be hero, logo, or icon"}), 400
+    if asset_kind not in {"hero", "logo"}:
+        return jsonify({"ok": False, "error": "Expected asset_kind to be hero or logo"}), 400
     asset_id = hero_id
     if not game_key or not asset_id:
         return jsonify({"ok": False, "error": "Expected game_key and hero_id"}), 400
@@ -1959,7 +1970,7 @@ def serve_game_art_thumb(game_key, filename):
     if not record:
         return jsonify({"ok": False, "error": "Unknown game"}), 404
     valid_filenames = set()
-    for singular, plural in (("hero", "heroes"), ("logo", "logos"), ("icon", "icons")):
+    for singular, plural in (("hero", "heroes"), ("logo", "logos")):
         for asset in record.get(plural, []):
             asset_id = asset.get("id")
             if not asset_id:
@@ -1978,7 +1989,7 @@ def serve_game_art_image(game_key, filename):
     if not record:
         return jsonify({"ok": False, "error": "Unknown game"}), 404
     valid_filenames = set()
-    for singular, plural in (("hero", "heroes"), ("logo", "logos"), ("icon", "icons")):
+    for singular, plural in (("hero", "heroes"), ("logo", "logos")):
         for asset in record.get(plural, []):
             asset_id = asset.get("id")
             if not asset_id:

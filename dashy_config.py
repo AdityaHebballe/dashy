@@ -13,7 +13,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gdk, GLib, Gtk
+from gi.repository import Adw, Gdk, GLib, Gtk, Pango
 
 
 CONFIG_URL = "http://127.0.0.1:5000/api/config"
@@ -54,26 +54,58 @@ STATS_THEME_LABELS = {
 
 APP_CSS = """
 .dashy-compact-button {
-  min-height: 30px;
-  min-width: 30px;
-  padding: 4px 10px;
+  min-height: 28px;
+  min-width: 28px;
+  padding: 2px 10px;
 }
 
 .dashy-compact-icon {
-  min-height: 28px;
-  min-width: 28px;
-  padding: 4px;
+  min-height: 26px;
+  min-width: 26px;
+  padding: 2px;
 }
 
 .dashy-card {
   background: alpha(@window_fg_color, 0.04);
   border: 1px solid alpha(@window_fg_color, 0.08);
-  border-radius: 16px;
-  padding: 14px;
+  border-radius: 14px;
+  padding: 10px;
+}
+
+.dashy-card-selected {
+  background: alpha(@accent_bg_color, 0.12);
+  border-color: alpha(@accent_bg_color, 0.55);
+}
+
+.dashy-selected-pill {
+  background: @accent_bg_color;
+  color: @accent_fg_color;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 0.84em;
+  font-weight: 700;
 }
 
 .dashy-tile-meta {
+  font-size: 0.9em;
+}
+
+.dashy-inline-entry {
+  min-height: 30px;
+}
+
+.dashy-sidebar-row {
+  padding: 8px 10px;
+  border-radius: 12px;
+}
+
+.dashy-sidebar-title {
+  font-weight: 600;
+}
+
+.dashy-sidebar-subtitle {
   font-size: 0.92em;
+  opacity: 0.72;
 }
 """
 
@@ -211,7 +243,7 @@ class SliderRow(Adw.ActionRow):
 
         self.scale = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL, adjustment=self.adjustment)
         self.scale.set_hexpand(True)
-        self.scale.set_size_request(220, -1)
+        self.scale.set_size_request(320, -1)
         self.scale.set_digits(digits)
         self.scale.set_draw_value(True)
         self.scale.set_value_pos(Gtk.PositionType.RIGHT)
@@ -262,7 +294,7 @@ class PhoneBrightnessRow(Adw.ActionRow):
 
         self.scale = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL, adjustment=self.adjustment)
         self.scale.set_hexpand(True)
-        self.scale.set_size_request(220, -1)
+        self.scale.set_size_request(320, -1)
         self.scale.set_digits(0)
         self.scale.set_draw_value(True)
         self.scale.set_value_pos(Gtk.PositionType.RIGHT)
@@ -298,13 +330,26 @@ class AssetTile(Gtk.Button):
         self.add_css_class("flat")
         self.add_css_class("dashy-card")
         if asset.get("selected"):
-            self.add_css_class("suggested-action")
+            self.add_css_class("dashy-card-selected")
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         box.set_margin_top(6)
         box.set_margin_bottom(6)
         box.set_margin_start(6)
         box.set_margin_end(6)
+
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        header.set_halign(Gtk.Align.FILL)
+        if asset.get("selected"):
+            selected_badge = Gtk.Label(label="Selected")
+            selected_badge.add_css_class("dashy-selected-pill")
+            selected_badge.set_halign(Gtk.Align.START)
+            header.append(selected_badge)
+        else:
+            spacer = Gtk.Box()
+            spacer.set_hexpand(True)
+            header.append(spacer)
+        box.append(header)
 
         picture = Gtk.Picture()
         picture.set_size_request(width, height)
@@ -328,6 +373,57 @@ class AssetTile(Gtk.Button):
         self.set_child(box)
 
 
+class GameListRow(Gtk.ListBoxRow):
+    def __init__(self, game):
+        super().__init__()
+        self.game_payload = game
+
+        outer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        outer.add_css_class("dashy-sidebar-row")
+        outer.set_margin_top(2)
+        outer.set_margin_bottom(2)
+        outer.set_margin_start(4)
+        outer.set_margin_end(4)
+
+        thumb_path = (
+            game.get("selected_logo_thumb_path")
+            or game.get("selected_thumb_path")
+        )
+        if thumb_path:
+            thumb = Gtk.Picture()
+            thumb.set_size_request(56, 40)
+            thumb.set_can_shrink(True)
+            thumb.set_content_fit(Gtk.ContentFit.CONTAIN)
+            thumb.set_filename(thumb_path)
+            outer.append(thumb)
+
+        text_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        text_box.set_hexpand(True)
+        text_box.set_valign(Gtk.Align.CENTER)
+
+        title = Gtk.Label(xalign=0)
+        title.add_css_class("dashy-sidebar-title")
+        title.set_text(game.get("display_name") or game.get("game_key"))
+        title.set_ellipsize(Pango.EllipsizeMode.END)
+        title.set_single_line_mode(True)
+        title.set_hexpand(True)
+        text_box.append(title)
+
+        subtitle_text = game.get("matched_game_name") or "No SteamGridDB match yet"
+        if game.get("active"):
+            subtitle_text = f"Active now • {subtitle_text}"
+        subtitle = Gtk.Label(xalign=0)
+        subtitle.add_css_class("dashy-sidebar-subtitle")
+        subtitle.set_text(subtitle_text)
+        subtitle.set_ellipsize(Pango.EllipsizeMode.END)
+        subtitle.set_single_line_mode(True)
+        subtitle.set_hexpand(True)
+        text_box.append(subtitle)
+
+        outer.append(text_box)
+        self.set_child(outer)
+
+
 class GameArtManagerWindow(Adw.Window):
     def __init__(self, parent_window, show_toast):
         super().__init__(transient_for=parent_window, modal=False, title="Game Wallpapers")
@@ -343,7 +439,7 @@ class GameArtManagerWindow(Adw.Window):
 
         header = Adw.HeaderBar()
         toolbar_view.add_top_bar(header)
-        header.set_title_widget(Adw.WindowTitle(title="Game Wallpapers", subtitle="Match detected MangoHud games to SteamGridDB hero art"))
+        header.set_title_widget(Adw.WindowTitle(title="Game Wallpapers", subtitle="Match detected MangoHud games to SteamGridDB background art and FPS logos"))
 
         refresh_button = Gtk.Button(icon_name="view-refresh-symbolic")
         refresh_button.add_css_class("flat")
@@ -396,6 +492,8 @@ class GameArtManagerWindow(Adw.Window):
 
         self.query_entry = Gtk.Entry()
         self.query_entry.set_hexpand(True)
+        self.query_entry.set_width_chars(28)
+        self.query_entry.add_css_class("dashy-inline-entry")
         self.query_entry.set_placeholder_text("SteamGridDB lookup query")
         query_row.append(self.query_entry)
 
@@ -404,54 +502,51 @@ class GameArtManagerWindow(Adw.Window):
         self.refetch_button.connect("clicked", self.on_refetch_clicked)
         query_row.append(self.refetch_button)
 
-        wallpaper_heading = Gtk.Label(label="Wallpaper", xalign=0)
-        wallpaper_heading.add_css_class("heading")
-        self.detail_box.append(wallpaper_heading)
+        self.asset_stack = Gtk.Stack()
+        self.asset_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        self.asset_stack.set_vexpand(True)
+
+        self.asset_switcher = Gtk.StackSwitcher()
+        self.asset_switcher.set_stack(self.asset_stack)
+        self.asset_switcher.set_halign(Gtk.Align.START)
+        self.detail_box.append(self.asset_switcher)
+        self.detail_box.append(self.asset_stack)
+
+        wallpaper_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        self.asset_stack.add_titled(wallpaper_page, "wallpaper", "Background Image")
 
         self.selected_preview = Gtk.Picture()
         self.selected_preview.set_size_request(720, 232)
         self.selected_preview.set_can_shrink(True)
         self.selected_preview.set_content_fit(Gtk.ContentFit.COVER)
-        self.detail_box.append(self.selected_preview)
+        wallpaper_page.append(self.selected_preview)
 
         self.heroes_flow = Gtk.FlowBox()
         self.heroes_flow.set_selection_mode(Gtk.SelectionMode.NONE)
         self.heroes_flow.set_max_children_per_line(3)
         self.heroes_flow.set_column_spacing(12)
         self.heroes_flow.set_row_spacing(12)
-        self.detail_box.append(self.heroes_flow)
+        wallpaper_page.append(self.heroes_flow)
 
-        fps_heading = Gtk.Label(label="FPS Card Asset", xalign=0)
-        fps_heading.add_css_class("heading")
-        self.detail_box.append(fps_heading)
+        fps_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
+        self.asset_stack.add_titled(fps_page, "fps", "FPS Card")
 
-        self.fps_preview = Gtk.Picture()
-        self.fps_preview.set_size_request(320, 160)
-        self.fps_preview.set_can_shrink(True)
-        self.fps_preview.set_content_fit(Gtk.ContentFit.CONTAIN)
-        self.detail_box.append(self.fps_preview)
+        self.logo_preview = Gtk.Picture()
+        self.logo_preview.set_size_request(340, 140)
+        self.logo_preview.set_can_shrink(True)
+        self.logo_preview.set_content_fit(Gtk.ContentFit.CONTAIN)
+        fps_page.append(self.logo_preview)
 
         logos_heading = Gtk.Label(label="Logos", xalign=0)
-        logos_heading.add_css_class("dim-label")
-        self.detail_box.append(logos_heading)
+        logos_heading.add_css_class("heading")
+        fps_page.append(logos_heading)
 
         self.logos_flow = Gtk.FlowBox()
         self.logos_flow.set_selection_mode(Gtk.SelectionMode.NONE)
         self.logos_flow.set_max_children_per_line(4)
         self.logos_flow.set_column_spacing(12)
         self.logos_flow.set_row_spacing(12)
-        self.detail_box.append(self.logos_flow)
-
-        icons_heading = Gtk.Label(label="Icons", xalign=0)
-        icons_heading.add_css_class("dim-label")
-        self.detail_box.append(icons_heading)
-
-        self.icons_flow = Gtk.FlowBox()
-        self.icons_flow.set_selection_mode(Gtk.SelectionMode.NONE)
-        self.icons_flow.set_max_children_per_line(6)
-        self.icons_flow.set_column_spacing(12)
-        self.icons_flow.set_row_spacing(12)
-        self.detail_box.append(self.icons_flow)
+        fps_page.append(self.logos_flow)
 
         self.load_games_async()
 
@@ -470,8 +565,9 @@ class GameArtManagerWindow(Adw.Window):
         self.match_label.set_text(subtitle)
         self.query_entry.set_text("")
         self.selected_preview.set_visible(False)
-        self.fps_preview.set_visible(False)
-        for flow in (self.heroes_flow, self.logos_flow, self.icons_flow):
+        self.logo_preview.set_visible(False)
+        self.asset_stack.set_visible_child_name("wallpaper")
+        for flow in (self.heroes_flow, self.logos_flow):
             child = flow.get_first_child()
             while child:
                 next_child = child.get_next_sibling()
@@ -508,18 +604,7 @@ class GameArtManagerWindow(Adw.Window):
         active_key = payload.get("active_game_key")
 
         for game in self.current_games:
-            subtitle = game.get("matched_game_name") or "No SteamGridDB match yet"
-            if game.get("active"):
-                subtitle = f"Active now • {subtitle}"
-            row = Adw.ActionRow(title=game.get("display_name") or game.get("game_key"), subtitle=subtitle)
-            row.game_payload = game
-            if game.get("selected_thumb_path"):
-                thumb = Gtk.Picture()
-                thumb.set_size_request(92, 52)
-                thumb.set_content_fit(Gtk.ContentFit.COVER)
-                thumb.set_filename(game.get("selected_thumb_path"))
-                row.add_prefix(thumb)
-            self.games_list.append(row)
+            self.games_list.append(GameListRow(game))
 
         if not self.current_games:
             self.show_placeholder("No games yet", "Launch a MangoHud-enabled game to populate the wallpaper cache.")
@@ -557,14 +642,14 @@ class GameArtManagerWindow(Adw.Window):
         else:
             self.selected_preview.set_visible(False)
 
-        fps_path = game.get("fps_asset_path") or game.get("selected_logo_path") or game.get("selected_icon_path")
-        if fps_path and Path(fps_path).exists():
-            self.fps_preview.set_filename(fps_path)
-            self.fps_preview.set_visible(True)
+        logo_path = game.get("selected_logo_path")
+        if logo_path and Path(logo_path).exists():
+            self.logo_preview.set_filename(logo_path)
+            self.logo_preview.set_visible(True)
         else:
-            self.fps_preview.set_visible(False)
+            self.logo_preview.set_visible(False)
 
-        for flow in (self.heroes_flow, self.logos_flow, self.icons_flow):
+        for flow in (self.heroes_flow, self.logos_flow):
             child = flow.get_first_child()
             while child:
                 next_child = child.get_next_sibling()
@@ -580,11 +665,6 @@ class GameArtManagerWindow(Adw.Window):
             tile = AssetTile(logo, width=140, height=140)
             tile.connect("clicked", self.on_asset_clicked, "logo", logo.get("id"))
             self.logos_flow.insert(tile, -1)
-
-        for icon in game.get("icons", []):
-            tile = AssetTile(icon, width=108, height=108)
-            tile.connect("clicked", self.on_asset_clicked, "icon", icon.get("id"))
-            self.icons_flow.insert(tile, -1)
 
     def on_refresh_clicked(self, _button):
         self.load_games_async()
@@ -696,8 +776,8 @@ class DashyConfigWindow(Adw.ApplicationWindow):
         toolbar_view.set_content(content)
 
         clamp = Adw.Clamp()
-        clamp.set_maximum_size(860)
-        clamp.set_tightening_threshold(720)
+        clamp.set_maximum_size(940)
+        clamp.set_tightening_threshold(760)
         content.set_child(clamp)
 
         page = Adw.PreferencesPage()
@@ -801,10 +881,14 @@ class DashyConfigWindow(Adw.ApplicationWindow):
             title="SteamGridDB API Key",
             subtitle="Stored locally on this PC only. Dashy uses it to match MangoHud-detected games to hero artwork.",
         )
-        sgdb_key_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        sgdb_key_box.set_hexpand(True)
+        sgdb_key_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        sgdb_key_box.set_halign(Gtk.Align.END)
+        sgdb_key_box.set_valign(Gtk.Align.CENTER)
         self.sgdb_key_entry = Gtk.Entry()
-        self.sgdb_key_entry.set_hexpand(True)
+        self.sgdb_key_entry.set_hexpand(False)
+        self.sgdb_key_entry.set_width_chars(26)
+        self.sgdb_key_entry.set_max_width_chars(32)
+        self.sgdb_key_entry.add_css_class("dashy-inline-entry")
         self.sgdb_key_entry.set_placeholder_text("Enter SteamGridDB API key")
         self.sgdb_key_entry.set_text(self.admin_config.get("steamgriddb_api_key", ""))
         sgdb_key_box.append(self.sgdb_key_entry)
@@ -822,6 +906,8 @@ class DashyConfigWindow(Adw.ApplicationWindow):
         )
         manage_art_button = Gtk.Button(label="Open")
         manage_art_button.add_css_class("dashy-compact-button")
+        manage_art_button.set_halign(Gtk.Align.END)
+        manage_art_button.set_valign(Gtk.Align.CENTER)
         manage_art_button.connect("clicked", self.on_open_game_art_manager)
         manage_art_row.add_suffix(manage_art_button)
         manage_art_row.set_activatable(False)
@@ -876,6 +962,9 @@ class DashyConfigWindow(Adw.ApplicationWindow):
         )
         phone_refresh_button = Gtk.Button(icon_name="view-refresh-symbolic")
         phone_refresh_button.set_tooltip_text("Reconnect and refresh the phone brightness")
+        phone_refresh_button.set_halign(Gtk.Align.END)
+        phone_refresh_button.set_valign(Gtk.Align.CENTER)
+        phone_refresh_button.add_css_class("dashy-compact-icon")
         phone_refresh_button.connect("clicked", self.on_phone_refresh)
         self.phone_status_row.add_suffix(phone_refresh_button)
         self.phone_status_row.set_activatable(False)
@@ -893,6 +982,8 @@ class DashyConfigWindow(Adw.ApplicationWindow):
         )
         self.monitor_match_button = Gtk.Button(label="Match")
         self.monitor_match_button.add_css_class("dashy-compact-button")
+        self.monitor_match_button.set_halign(Gtk.Align.END)
+        self.monitor_match_button.set_valign(Gtk.Align.CENTER)
         self.monitor_match_button.connect("clicked", self.on_match_monitor_brightness)
         self.monitor_match_row.add_suffix(self.monitor_match_button)
         self.monitor_match_row.set_activatable(False)
@@ -907,6 +998,8 @@ class DashyConfigWindow(Adw.ApplicationWindow):
         )
         reset_button = Gtk.Button(label="Reset")
         reset_button.add_css_class("dashy-compact-button")
+        reset_button.set_halign(Gtk.Align.END)
+        reset_button.set_valign(Gtk.Align.CENTER)
         reset_button.connect("clicked", self.on_reset)
         reset_row.add_suffix(reset_button)
         reset_row.set_activatable(False)
@@ -1160,13 +1253,18 @@ class DashyConfigWindow(Adw.ApplicationWindow):
 class DashyConfigApp(Adw.Application):
     def __init__(self):
         super().__init__(application_id="local.dashy.config")
+        self.main_window = None
 
     def do_activate(self):
         apply_app_css()
-        window = self.props.active_window
-        if window is None:
-            window = DashyConfigWindow(self)
-        window.present()
+        if self.main_window is None:
+            self.main_window = DashyConfigWindow(self)
+            self.main_window.connect("close-request", self.on_main_window_close_request)
+        self.main_window.present()
+
+    def on_main_window_close_request(self, _window):
+        self.main_window = None
+        return False
 
 
 def main():
