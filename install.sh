@@ -124,9 +124,6 @@ else
     echo "- Skipped system wake-service install because sudo is not available."
 fi
 
-echoadb devices
-List of devices attached
-192.168.0.8:5555        device
 echo "Dashy installed/updated."
 echo "Service: ${SERVICE_FILE}"
 echo "App dir: ${INSTALL_DIR}"

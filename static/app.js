@@ -20,8 +20,10 @@
         let lyricScrollTarget = 0;
         let currentUiConfigKey = '';
         let currentControlMode = 'buttons';
-        let currentStatsTheme = 'macchiato';
+        let currentStatsTheme = 'slate';
         let currentHasActiveTrack = false;
+        let activeArtworkSlot = 'a';
+        let activeBlurSlot = 'a';
         let gesturePointerId = null;
         let gestureStartX = 0;
         let gestureStartY = 0;
@@ -42,13 +44,15 @@
         const progressFill = document.getElementById('progress-fill');
         const trackNameElem = document.getElementById('track-name');
         const artistNameElem = document.getElementById('artist-name');
-        const albumArtElem = document.getElementById('album-art');
+        const albumArtElemA = document.getElementById('album-art-a');
+        const albumArtElemB = document.getElementById('album-art-b');
         const artworkShellElem = document.querySelector('.artwork-shell');
         const albumArtTouchElem = document.getElementById('album-art-touch');
         const albumArtOverlayElem = document.getElementById('album-art-overlay');
         const swipeHintPrevElem = document.getElementById('swipe-hint-prev');
         const swipeHintNextElem = document.getElementById('swipe-hint-next');
-        const blurElem = document.getElementById('bg-blur');
+        const blurElemA = document.getElementById('bg-blur-a');
+        const blurElemB = document.getElementById('bg-blur-b');
         const cpuStatElem = document.getElementById('cpu-stat');
         const gpuStatElem = document.getElementById('gpu-stat');
         const ramStatElem = document.getElementById('ram-stat');
@@ -77,7 +81,7 @@
                     lastUpdateTime = currentTimestamp;
 
                     const clampTime = Math.min(localTime, currentDuration);
-                    syncLyrics(clampTime + 0.25);
+                    syncLyrics(clampTime + 0.05);
 
                     if ((now - lastProgressPaintTime) >= PROGRESS_PAINT_INTERVAL_MS) {
                         const progressPct = (clampTime / currentDuration) * 100;
@@ -181,6 +185,70 @@
             const mins = Math.floor(seconds / 60);
             const secs = Math.floor(seconds % 60);
             return `${mins}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        function getTrackMetaElem() {
+            return trackNameElem.parentElement;
+        }
+
+        function getActiveArtworkElem() {
+            return activeArtworkSlot === 'a' ? albumArtElemA : albumArtElemB;
+        }
+
+        function getInactiveArtworkElem() {
+            return activeArtworkSlot === 'a' ? albumArtElemB : albumArtElemA;
+        }
+
+        function getActiveBlurElem() {
+            return activeBlurSlot === 'a' ? blurElemA : blurElemB;
+        }
+
+        function getInactiveBlurElem() {
+            return activeBlurSlot === 'a' ? blurElemB : blurElemA;
+        }
+
+        function animateTrackSwap() {
+            const metaElem = getTrackMetaElem();
+            metaElem.classList.add('swapping');
+            setTimeout(() => {
+                metaElem.classList.remove('swapping');
+            }, 240);
+        }
+
+        function animateLyricsSwap() {
+            lyricsContainer.classList.add('swapping');
+            setTimeout(() => {
+                lyricsContainer.classList.remove('swapping');
+            }, 220);
+        }
+
+        function swapArtwork(targetSrc, hasArtwork) {
+            const activeElem = getActiveArtworkElem();
+            if (activeElem.getAttribute('src') === targetSrc) {
+                activeElem.style.padding = hasArtwork ? '0' : '15%';
+                return;
+            }
+
+            const inactiveElem = getInactiveArtworkElem();
+            inactiveElem.style.padding = hasArtwork ? '0' : '15%';
+            inactiveElem.setAttribute('src', targetSrc);
+            inactiveElem.classList.add('album-art-active');
+            activeElem.classList.remove('album-art-active');
+            activeArtworkSlot = activeArtworkSlot === 'a' ? 'b' : 'a';
+        }
+
+        function swapBlur(rawUrl) {
+            const nextImage = rawUrl ? `url("${rawUrl}")` : 'none';
+            const activeElem = getActiveBlurElem();
+            if (activeElem.style.backgroundImage === nextImage) {
+                return;
+            }
+
+            const inactiveElem = getInactiveBlurElem();
+            inactiveElem.style.backgroundImage = nextImage;
+            inactiveElem.classList.add('bg-blur-active');
+            activeElem.classList.remove('bg-blur-active');
+            activeBlurSlot = activeBlurSlot === 'a' ? 'b' : 'a';
         }
 
         function formatTemp(value) {
@@ -476,15 +544,8 @@
             const placeholderSvg = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJyZ2JhKDI1NSwyNTUsMjU1LDAuMSkiIHN0cm9rZS13aWR0aD0iMSI+PHBhdGggZD0iTTkgMThWNWwxMi0ydjEzIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz48Y2lyY2xlIGN4PSI2IiBjeT0iMTgiIHI9IjMiLz48Y2lyY2xlIGN4PSIxOCIgY3k9IjE2IiByPSIzIi8+PC9zdmc+';
             const targetSrc = rawUrl || placeholderSvg;
             
-            if (albumArtElem.getAttribute('src') !== targetSrc) {
-                albumArtElem.style.padding = rawUrl ? '0' : '15%';
-                albumArtElem.setAttribute('src', targetSrc);
-            }
-            
-            const targetBg = rawUrl ? `url("${rawUrl}")` : 'none';
-            if (!blurElem.style.backgroundImage.includes(rawUrl) || rawUrl === '') {
-                blurElem.style.backgroundImage = targetBg;
-            }
+            swapArtwork(targetSrc, Boolean(rawUrl));
+            swapBlur(rawUrl);
 
             currentDuration = (data.duration || 0) / 1000;
             localTime = data.current_time || 0;
@@ -500,6 +561,8 @@
             const nextTrackId = `${data.track || ''}::${data.artist || ''}::${data.duration || ''}`;
             const nextLyricsKey = `${data.lyrics_synced ? 'synced' : 'plain'}::${data.lyrics || ''}`;
             if (nextTrackId !== currentTrackId) {
+                animateTrackSwap();
+                animateLyricsSwap();
                 currentTrackId = nextTrackId;
                 currentLyricsKey = nextLyricsKey;
                 renderLyrics(data.lyrics, data.lyrics_synced);
@@ -510,9 +573,10 @@
                 lyricsContainer.scrollTop = 0;
                 lyricScrollTarget = 0;
                 if (hasSyncedLyrics && parsedLyrics.length > 0) {
-                    syncLyrics(localTime + 0.25);
+                    syncLyrics(localTime);
                 }
             } else if (nextLyricsKey !== currentLyricsKey) {
+                animateLyricsSwap();
                 currentLyricsKey = nextLyricsKey;
                 renderLyrics(data.lyrics, data.lyrics_synced);
                 if (lyricScrollAnimationId) {
@@ -522,7 +586,7 @@
                 lyricsContainer.scrollTop = 0;
                 lyricScrollTarget = 0;
                 if (hasSyncedLyrics && parsedLyrics.length > 0) {
-                    syncLyrics(localTime + 0.25);
+                    syncLyrics(localTime);
                 }
             }
         }

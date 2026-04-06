@@ -7,7 +7,8 @@
     <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body data-stats-theme="slate">
-    <div class="bg-blur" id="bg-blur"></div>
+    <div class="bg-blur-layer bg-blur-active" id="bg-blur-a"></div>
+    <div class="bg-blur-layer" id="bg-blur-b"></div>
     <div class="app-shell">
         <div class="dashboard-frame">
             <section id="music-view" class="hidden">
@@ -18,7 +19,8 @@
                         <div class="album-art-touch" id="album-art-touch" aria-label="Album art playback controls">
                             <div class="album-art-overlay" id="album-art-overlay" aria-hidden="true">❚❚</div>
                         </div>
-                        <img id="album-art" src="" alt="Album art">
+                        <img class="album-art-layer album-art-active" id="album-art-a" src="" alt="Album art">
+                        <img class="album-art-layer" id="album-art-b" src="" alt="" aria-hidden="true">
                     </div>
 
                     <div class="track-meta">

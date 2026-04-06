@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -15,6 +16,7 @@ from gi.repository import Adw, GLib, Gtk
 
 CONFIG_URL = "http://127.0.0.1:5000/api/config"
 ADB_BIN = shutil.which("adb") or "/usr/bin/adb"
+DDCUTIL_BIN = shutil.which("ddcutil") or "/usr/bin/ddcutil"
 PHONE_ADB_TARGET = "192.168.0.8:5555"
 DEFAULTS = {
     "lyrics_font_scale": 1.0,
@@ -94,6 +96,26 @@ def set_phone_brightness(value):
     adb_shell("settings", "put", "system", "screen_brightness_mode", "0")
     adb_shell("settings", "put", "system", "screen_brightness", brightness)
     return int(brightness)
+
+
+def get_monitor_brightness():
+    result = run_command([DDCUTIL_BIN, "getvcp", "10"], timeout=6)
+    if result.returncode != 0:
+        raise RuntimeError((result.stderr or result.stdout or "ddcutil getvcp failed").strip())
+
+    match = re.search(r"current value\s*=\s*(\d+),\s*max value\s*=\s*(\d+)", result.stdout, re.IGNORECASE)
+    if not match:
+        raise RuntimeError("could not parse monitor brightness")
+
+    current = int(match.group(1))
+    maximum = int(match.group(2))
+    return current, maximum
+
+
+def set_monitor_brightness(value):
+    result = run_command([DDCUTIL_BIN, "setvcp", "10", str(int(round(value)))], timeout=8)
+    if result.returncode != 0:
+        raise RuntimeError((result.stderr or result.stdout or "ddcutil setvcp failed").strip())
 
 
 class SliderRow(Adw.ActionRow):
@@ -200,6 +222,7 @@ class DashyConfigWindow(Adw.ApplicationWindow):
         self.phone_request_in_flight = False
         self.phone_connected = False
         self.pending_phone_brightness = None
+        self.monitor_match_in_flight = False
 
         self.toast_overlay = Adw.ToastOverlay()
         self.set_content(self.toast_overlay)
@@ -342,6 +365,16 @@ class DashyConfigWindow(Adw.ApplicationWindow):
         self.phone_brightness_row.set_sensitive(False)
         phone_group.add(self.phone_brightness_row)
 
+        self.monitor_match_row = Adw.ActionRow(
+            title="Match Phone To Monitor",
+            subtitle="Reads monitor brightness with ddcutil and applies the equivalent brightness to the phone.",
+        )
+        self.monitor_match_button = Gtk.Button(label="Match Now")
+        self.monitor_match_button.connect("clicked", self.on_match_monitor_brightness)
+        self.monitor_match_row.add_suffix(self.monitor_match_button)
+        self.monitor_match_row.set_activatable(False)
+        phone_group.add(self.monitor_match_row)
+
         action_group = Adw.PreferencesGroup()
         page.add(action_group)
 
@@ -438,6 +471,7 @@ class DashyConfigWindow(Adw.ApplicationWindow):
         self.phone_status_row.set_title(title)
         self.phone_status_row.set_subtitle(subtitle)
         self.phone_brightness_row.set_sensitive(available or self.phone_request_in_flight)
+        self.monitor_match_button.set_sensitive(available and not self.monitor_match_in_flight)
 
     def refresh_phone_brightness(self):
         if self.phone_request_in_flight:
@@ -528,6 +562,47 @@ class DashyConfigWindow(Adw.ApplicationWindow):
         self.phone_request_in_flight = False
         self.set_phone_status("Phone Status", f"Brightness update failed: {message}", False)
         self.show_toast(f"Phone brightness failed: {message}")
+        return False
+
+    def on_match_monitor_brightness(self, _button):
+        if self.monitor_match_in_flight or not self.phone_connected:
+            return
+
+        self.monitor_match_in_flight = True
+        self.monitor_match_button.set_sensitive(False)
+        self.monitor_match_row.set_subtitle("Reading monitor brightness and updating the phone…")
+
+        def worker():
+            try:
+                current_monitor, max_monitor = get_monitor_brightness()
+                target_phone = max(1, min(255, round((current_monitor / max_monitor) * 255))) if max_monitor else 1
+                applied_phone = set_phone_brightness(target_phone)
+            except Exception as exc:
+                GLib.idle_add(self.on_match_monitor_failed, str(exc))
+                return
+            GLib.idle_add(self.on_match_monitor_success, current_monitor, max_monitor, applied_phone)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def on_match_monitor_success(self, current_monitor, max_monitor, applied_phone):
+        self.monitor_match_in_flight = False
+        self.monitor_match_button.set_sensitive(self.phone_connected)
+        monitor_percent = round((current_monitor / max_monitor) * 100) if max_monitor else 0
+        phone_percent = round((applied_phone / 255) * 100)
+        self.monitor_match_row.set_subtitle(
+            f"Matched monitor {current_monitor}/{max_monitor} ({monitor_percent}%) to phone {applied_phone}/255 ({phone_percent}%)."
+        )
+        self.phone_brightness_programmatic = True
+        self.phone_brightness_row.set_value(applied_phone)
+        self.phone_brightness_programmatic = False
+        self.show_toast("Phone brightness matched to monitor.")
+        return False
+
+    def on_match_monitor_failed(self, message):
+        self.monitor_match_in_flight = False
+        self.monitor_match_button.set_sensitive(self.phone_connected)
+        self.monitor_match_row.set_subtitle(f"Monitor match failed: {message}")
+        self.show_toast(f"Monitor match failed: {message}")
         return False
 
 
