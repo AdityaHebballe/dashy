@@ -1,7 +1,5 @@
         const API_URL = '/api/dashboard';
         const CONTROL_URL = '/api/control';
-        const CONFIG_URL = '/api/config';
-
         let currentTrackId = '';
         let currentLyricsKey = '';
         let parsedLyrics = [];
@@ -35,7 +33,7 @@
         let swipeCommitThreshold = 22;
         let albumArtOverlayTimeout = null;
 
-        const STATS_POLL_INTERVAL_MS = 250;
+        const STATS_POLL_INTERVAL_MS = 1000;
         const MUSIC_POLL_INTERVAL_MS = 2500;
         const PLAYBACK_TICK_MS = 120;
         const IDLE_TICK_MS = 500;
@@ -68,7 +66,18 @@
         const gpuGaugeElem = document.getElementById('gpu-gauge');
         const ramFillElem = document.getElementById('ram-fill');
         const diskBarElem = document.getElementById('disk-bar');
+        const cpuTempBoxElem = document.getElementById('cpu-temp-box');
+        const cpuTempStatElem = document.getElementById('cpu-temp-stat');
+        const cpuTempIconElem = document.getElementById('cpu-temp-icon');
+        const gpuTempBoxElem = document.getElementById('gpu-temp-box');
+        const gpuTempStatElem = document.getElementById('gpu-temp-stat');
+        const gpuTempIconElem = document.getElementById('gpu-temp-icon');
         let currentStatsGameArtUrl = '';
+        let currentFpsAssetUrl = '';
+        const tempBoxState = {
+            cpu: { className: '', text: '', hasValue: false },
+            gpu: { className: '', text: '', hasValue: false },
+        };
 
         function setGaugeValue(element, percent) {
             const circumference = 220;
@@ -276,13 +285,23 @@
             return 'temp-crit';
         }
 
-        function updateTempBox(idBox, idStat, value) {
-            const box = document.getElementById(idBox);
-            box.className = 'stats-temp-right ' + getTempClass(value);
-            if (Number.isFinite(value)) {
-                box.innerHTML = `<svg class="temp-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"></path></svg><span class="temp-value" id="${idStat}">${value.toFixed(1)}°C</span>`;
-            } else {
-                box.innerHTML = `<span class="temp-value" id="${idStat}">--</span>`;
+        function updateTempBox(boxElem, statElem, iconElem, value, state) {
+            const className = 'stats-temp-right ' + getTempClass(value);
+            if (state.className !== className) {
+                boxElem.className = className;
+                state.className = className;
+            }
+
+            const text = Number.isFinite(value) ? `${value.toFixed(1)}°C` : '--';
+            if (state.text !== text) {
+                statElem.textContent = text;
+                state.text = text;
+            }
+
+            const hasValue = Number.isFinite(value);
+            if (state.hasValue !== hasValue) {
+                iconElem.classList.toggle('hidden', !hasValue);
+                state.hasValue = hasValue;
             }
         }
 
@@ -526,11 +545,17 @@
             fpsStatElem.textContent = showFps ? `${Math.round(fps)}` : '0';
             fpsGameNameElem.textContent = showFps ? gameName : '';
             if (showFps && gameFpsAssetUrl) {
-                fpsGameIconElem.setAttribute('src', gameFpsAssetUrl);
+                if (currentFpsAssetUrl !== gameFpsAssetUrl) {
+                    fpsGameIconElem.setAttribute('src', gameFpsAssetUrl);
+                    currentFpsAssetUrl = gameFpsAssetUrl;
+                }
                 fpsGameIconElem.classList.remove('hidden');
                 fpsFallbackIconElem.classList.add('hidden');
             } else {
-                fpsGameIconElem.removeAttribute('src');
+                if (currentFpsAssetUrl) {
+                    fpsGameIconElem.removeAttribute('src');
+                    currentFpsAssetUrl = '';
+                }
                 fpsGameIconElem.classList.add('hidden');
                 fpsFallbackIconElem.classList.remove('hidden');
             }
@@ -562,8 +587,8 @@
                 statsView.classList.toggle('has-game-art', Boolean(gameArtUrl));
             }
 
-            updateTempBox('cpu-temp-box', 'cpu-temp-stat', data.cpu_temp);
-            updateTempBox('gpu-temp-box', 'gpu-temp-stat', data.gpu_temp);
+            updateTempBox(cpuTempBoxElem, cpuTempStatElem, cpuTempIconElem, data.cpu_temp, tempBoxState.cpu);
+            updateTempBox(gpuTempBoxElem, gpuTempStatElem, gpuTempIconElem, data.gpu_temp, tempBoxState.gpu);
         }
 
         function updatePlayPauseButton(isPlaying) {
@@ -682,7 +707,14 @@
             isTransitioning = true;
 
             try {
-                await fetch(`${CONTROL_URL}/${action}`, { method: 'POST' });
+                const response = await fetch(`${CONTROL_URL}/${action}`, { method: 'POST' });
+                if (!response.ok) {
+                    throw new Error(`Control request failed with status ${response.status}`);
+                }
+                const payload = await response.json().catch(() => null);
+                if (payload && payload.ok === false) {
+                    throw new Error(payload.error || `Control request failed with status ${response.status}`);
+                }
                 if (dashboardPollTimeout) {
                     clearTimeout(dashboardPollTimeout);
                     dashboardPollTimeout = null;
@@ -703,6 +735,9 @@
 
             try {
                 const response = await fetch(API_URL);
+                if (!response.ok) {
+                    throw new Error(`Dashboard request failed with status ${response.status}`);
+                }
                 const data = await response.json();
 
                 if (data.mode === 'music' && data.has_active_track) {

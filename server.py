@@ -60,14 +60,16 @@ stats_lock = threading.RLock()
 config_lock = threading.RLock()
 admin_config_lock = threading.RLock()
 game_art_lock = threading.RLock()
-http_session = requests.Session()
+thread_local = threading.local()
 lyrics_result_cache = OrderedDict()
 cider_request_pool = ThreadPoolExecutor(max_workers=4)
+lyrics_request_pool = ThreadPoolExecutor(max_workers=1)
 ui_config = dict(DEFAULT_UI_CONFIG)
 admin_config = dict(DEFAULT_ADMIN_CONFIG)
 admin_config_mtime = 0.0
 active_game_art_refreshes = set()
 game_art_refresh_failures = {}
+current_lyrics_job_token = 0
 
 LYRICS_CACHE_MAX_BYTES = int(os.getenv("LYRICS_CACHE_MAX_BYTES", str(32 * 1024 * 1024)))
 LYRICS_CACHE_MAX_ENTRIES = int(os.getenv("LYRICS_CACHE_MAX_ENTRIES", "512"))
@@ -151,6 +153,14 @@ def cpu_sampler_loop():
 
 cpu_sampler_thread = threading.Thread(target=cpu_sampler_loop, daemon=True)
 cpu_sampler_thread.start()
+
+
+def get_http_session():
+    session = getattr(thread_local, "http_session", None)
+    if session is None:
+        session = requests.Session()
+        thread_local.http_session = session
+    return session
 
 
 def get_active_game_info():
@@ -1032,7 +1042,7 @@ def sgdb_request(path):
         "User-Agent": "dashy/1.0",
     }
     try:
-        response = http_session.get(f"{SGDB_API_BASE}{path}", headers=headers, timeout=8)
+        response = get_http_session().get(f"{SGDB_API_BASE}{path}", headers=headers, timeout=8)
         if response.status_code != 200:
             return None
         payload = response.json()
@@ -1075,7 +1085,7 @@ def download_cached_file(url, destination_dir, stem_prefix):
     try:
         destination_dir.mkdir(parents=True, exist_ok=True)
         temp_path = path.with_suffix(path.suffix + ".tmp")
-        with http_session.get(url, stream=True, timeout=12) as response:
+        with get_http_session().get(url, stream=True, timeout=12) as response:
             if response.status_code != 200:
                 return None
             with temp_path.open("wb") as handle:
@@ -1395,11 +1405,11 @@ def get_mangohud_fps():
 
 
 def cider_get(endpoint):
-    return http_session.get(f"{CIDER_API_URL}/{endpoint}", timeout=0.8)
+    return get_http_session().get(f"{CIDER_API_URL}/{endpoint}", timeout=0.8)
 
 
 def cider_post(endpoint):
-    return http_session.post(f"{CIDER_API_URL}/{endpoint}", timeout=0.8)
+    return get_http_session().post(f"{CIDER_API_URL}/{endpoint}", timeout=0.8)
 
 
 def normalize_text(value):
@@ -1414,7 +1424,19 @@ def normalize_text(value):
 def lyrics_quality_penalty(text):
     if not text:
         return 999
-    return text.upper().count("UNKNOWN")
+    return len(re.findall(r"\bUNKNOWN\b", text.upper()))
+
+
+def sanitize_lyric_text(value):
+    text = (value or "").strip()
+    if not text:
+        return ""
+
+    # Some providers inject UNKNOWN as a placeholder token at line boundaries.
+    text = re.sub(r"^(?:UNKNOWN\b[\s:,-]*)+", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"(?:[\s:,-]*\bUNKNOWN\b)+$", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s{2,}", " ", text)
+    return text.strip()
 
 
 def build_lrc_line_map(text):
@@ -1426,7 +1448,7 @@ def build_lrc_line_map(text):
             continue
         minutes = int(match.group(1))
         seconds = float(match.group(2))
-        lyric = match.group(3).strip()
+        lyric = sanitize_lyric_text(match.group(3))
         if lyric:
             line_map[round(minutes * 60 + seconds, 2)] = lyric
     return line_map
@@ -1454,7 +1476,7 @@ def merge_lrc_versions(primary_text, backup_text):
 
 def request_lrclib(url):
     try:
-        response = http_session.get(url, timeout=3)
+        response = get_http_session().get(url, timeout=3)
         if response.status_code == 200:
             return response.json()
     except Exception as exc:
@@ -1495,12 +1517,13 @@ def clean_lyrics_text(text, is_synced):
             if not match:
                 continue
             timestamp, lyric = match.groups()
-            lyric = lyric.strip()
-            if not lyric or lyric.upper() == "UNKNOWN":
+            lyric = sanitize_lyric_text(lyric)
+            if not lyric:
                 continue
             cleaned_lines.append(f"{timestamp}{lyric}")
         else:
-            if line.upper() == "UNKNOWN":
+            line = sanitize_lyric_text(line)
+            if not line:
                 continue
             cleaned_lines.append(line)
 
@@ -1566,15 +1589,17 @@ def get_musixmatch_token():
     global musixmatch_token
     url = f"{MUSIXMATCH_BASE}token.get?app_id=web-desktop-app-v1.0"
     try:
-        resp = http_session.get(url, headers={"Authority": "apic-desktop.musixmatch.com"}, timeout=2)
+        resp = get_http_session().get(url, headers={"Authority": "apic-desktop.musixmatch.com"}, timeout=2)
         data = resp.json()
         musixmatch_token = data.get("message", {}).get("body", {}).get("user_token")
     except Exception:
         pass
 
 
-def fetch_musixmatch(artist, track, album, duration_sec):
+def fetch_musixmatch(artist, track, album, duration_sec, stale_check=None):
     global musixmatch_token
+    if stale_check and stale_check():
+        return None
     if not musixmatch_token:
         get_musixmatch_token()
     if not musixmatch_token:
@@ -1595,14 +1620,20 @@ def fetch_musixmatch(artist, track, album, duration_sec):
         params["q_album"] = album
 
     try:
-        resp = http_session.get(url, params=params, headers={"Authority": "apic-desktop.musixmatch.com", "Cookie": f"x-mxm-user-id="}, timeout=3)
+        if stale_check and stale_check():
+            return None
+        resp = get_http_session().get(url, params=params, headers={"Authority": "apic-desktop.musixmatch.com", "Cookie": f"x-mxm-user-id="}, timeout=3)
         data = resp.json()
 
         status = data.get("message", {}).get("header", {}).get("status_code")
         if status == 401:
+            if stale_check and stale_check():
+                return None
             get_musixmatch_token()
             params["usertoken"] = musixmatch_token
-            resp = http_session.get(url, params=params, headers={"Authority": "apic-desktop.musixmatch.com", "Cookie": f"x-mxm-user-id="}, timeout=3)
+            if stale_check and stale_check():
+                return None
+            resp = get_http_session().get(url, params=params, headers={"Authority": "apic-desktop.musixmatch.com", "Cookie": f"x-mxm-user-id="}, timeout=3)
             data = resp.json()
 
         macro_calls = data.get("message", {}).get("body", {}).get("macro_calls", {})
@@ -1642,28 +1673,37 @@ def fetch_musixmatch(artist, track, album, duration_sec):
         return None
 
 
-def update_lyrics_background(artist, track, album, duration, job_track_id):
+def update_lyrics_background(artist, track, album, duration, job_track_id, job_token):
     global cached_lyrics_payload
 
-    with lyrics_lock:
-        if job_track_id == current_track_id:
-            pass
-        else:
-            return
+    def is_stale():
+        with lyrics_lock:
+            return job_track_id != current_track_id or job_token != current_lyrics_job_token
 
-    payload = fetch_best_lyrics(artist, track, album, duration)
+    if is_stale():
+        return
+
+    payload = fetch_best_lyrics(artist, track, album, duration, stale_check=is_stale)
+    if is_stale():
+        return
     payload = store_cached_lyrics(job_track_id, payload)
 
     with lyrics_lock:
-        if job_track_id == current_track_id:
+        if not is_stale():
             cached_lyrics_payload = payload
 
-def fetch_best_lyrics(artist, track, album, duration_ms):
+
+def fetch_best_lyrics(artist, track, album, duration_ms, stale_check=None):
+    def should_abort():
+        return bool(stale_check and stale_check())
+
     duration_sec = int(duration_ms / 1000) if duration_ms else 0
     candidates = []
     raw_track = (track or "").strip()
 
-    mxm = fetch_musixmatch(artist, raw_track, album, duration_sec)
+    if should_abort():
+        return None
+    mxm = fetch_musixmatch(artist, raw_track, album, duration_sec, stale_check=stale_check)
     if mxm:
         candidates.append(mxm)
         if mxm["is_synced"] and mxm["unknown_penalty"] == 0:
@@ -1673,21 +1713,29 @@ def fetch_best_lyrics(artist, track, album, duration_ms):
                 "source": mxm["source"],
             }
 
+    if should_abort():
+        return None
     exact = fetch_lrclib_exact(artist, raw_track, album, duration_sec)
     if exact:
         candidates.append(exact)
 
     normalized_track = normalize_text(raw_track)
     if normalized_track and normalized_track != raw_track.lower():
+        if should_abort():
+            return None
         normalized_exact = fetch_lrclib_exact(artist, normalized_track, album, duration_sec)
         if normalized_exact:
             candidates.append(normalized_exact)
 
+    if should_abort():
+        return None
     search_match = search_lrclib(artist, raw_track, duration_sec)
     if search_match:
         candidates.append(search_match)
 
     if normalized_track and normalized_track != raw_track.lower():
+        if should_abort():
+            return None
         normalized_search = search_lrclib(artist, normalized_track, duration_sec)
         if normalized_search:
             candidates.append(normalized_search)
@@ -1752,7 +1800,7 @@ def build_stats_payload():
 
 @app.route("/api/dashboard")
 def dashboard_data():
-    global current_track_id, cached_lyrics_payload
+    global current_track_id, cached_lyrics_payload, current_lyrics_job_token
 
     is_playing_future = cider_request_pool.submit(cider_get, "is-playing")
     now_playing_future = cider_request_pool.submit(cider_get, "now-playing")
@@ -1782,6 +1830,7 @@ def dashboard_data():
             track_changed = track_id != current_track_id
             if track_changed:
                 current_track_id = track_id
+                current_lyrics_job_token += 1
                 cached_lyrics_payload = {"text": "", "is_synced": False, "source": None}
             else:
                 track_changed = False
@@ -1796,15 +1845,14 @@ def dashboard_data():
                         should_start_lyrics_job = True
 
         if should_start_lyrics_job:
-            t = threading.Thread(target=update_lyrics_background, args=(
+            lyrics_request_pool.submit(update_lyrics_background,
                 music_data.get("artistName", ""),
                 music_data.get("name", ""),
                 music_data.get("albumName", ""),
                 music_data.get("durationInMillis", 0),
-                track_id
-            ))
-            t.daemon = True
-            t.start()
+                track_id,
+                current_lyrics_job_token,
+            )
 
         with lyrics_lock:
             lyrics_payload = dict(cached_lyrics_payload)
