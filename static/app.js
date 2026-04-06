@@ -28,6 +28,7 @@
         let swipeDirection = 0;
         let swipeStartThreshold = 6;
         let swipeCommitThreshold = 22;
+        let albumArtOverlayTimeout = null;
 
         const STATS_POLL_INTERVAL_MS = 250;
         const MUSIC_POLL_INTERVAL_MS = 2500;
@@ -408,7 +409,25 @@
             playbackIsPlaying = Boolean(isPlaying);
             playPauseBtn.textContent = playbackIsPlaying ? '❚❚' : '▶';
             playPauseBtn.setAttribute('aria-label', playbackIsPlaying ? 'Pause playback' : 'Resume playback');
-            albumArtOverlayElem.classList.toggle('paused', !playbackIsPlaying);
+        }
+
+        function flashAlbumArtOverlay(icon) {
+            if (currentControlMode !== 'swipe') return;
+
+            if (albumArtOverlayTimeout) {
+                clearTimeout(albumArtOverlayTimeout);
+                albumArtOverlayTimeout = null;
+            }
+
+            albumArtOverlayElem.textContent = icon;
+            albumArtOverlayElem.classList.remove('flash');
+            void albumArtOverlayElem.offsetWidth;
+            albumArtOverlayElem.classList.add('flash');
+
+            albumArtOverlayTimeout = setTimeout(() => {
+                albumArtOverlayElem.classList.remove('flash');
+                albumArtOverlayTimeout = null;
+            }, 280);
         }
 
         function updateMusicUI(data) {
@@ -581,6 +600,7 @@
                 sendControl(deltaX < 0 ? 'next' : 'previous');
             } else if (absX < 18 && absY < 18 && elapsed < 350) {
                 finishArtworkSwipe(0);
+                flashAlbumArtOverlay(playbackIsPlaying ? '❚❚' : '▶');
                 sendControl('playpause');
             } else {
                 finishArtworkSwipe(0);
