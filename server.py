@@ -25,6 +25,7 @@ APP_PORT = int(os.getenv("DASHY_PORT", "5000"))
 APP_DIR = Path(__file__).resolve().parent
 CONFIG_DIR = Path(os.getenv("DASHY_CONFIG_DIR", os.path.expanduser("~/.config/dashy")))
 CONFIG_PATH = CONFIG_DIR / "config.json"
+MANGOHUD_LOG_DIR = Path(os.getenv("DASHY_MANGOHUD_LOG_DIR", os.path.expanduser("~/.local/state/dashy/mangohud")))
 
 DEFAULT_UI_CONFIG = {
     "lyrics_font_scale": 1.0,
@@ -64,16 +65,28 @@ stats_cache = {
     "cpu_temp": {"value": None, "updated_at": 0.0},
     "gpu_temp": {"value": None, "updated_at": 0.0},
     "ram": {"value": 0.0, "updated_at": 0.0},
+    "fps": {"value": None, "updated_at": 0.0},
 }
 cpu_samples = deque(maxlen=4)
 
 STATS_INTERVALS = {
+    "fps": 1.0,
     "gpu": 2.0,
     "disk": 2.0,
     "cpu_temp": 3.0,
     "gpu_temp": 3.0,
     "ram": 5.0,
 }
+
+MANGOHUD_FPS_STALE_SECONDS = 4.0
+MANGOHUD_LOG_MAX_AGE_SECONDS = 24 * 60 * 60
+MANGOHUD_CLEANUP_INTERVAL_SECONDS = 6 * 60 * 60
+MANGOHUD_IDLE_POLL_SECONDS = 10.0
+MANGOHUD_ACTIVE_POLL_SECONDS = 1.0
+next_mangohud_cleanup_at = 0.0
+mangohud_last_probe_at = 0.0
+mangohud_next_probe_delay = MANGOHUD_IDLE_POLL_SECONDS
+mangohud_last_fps_value = None
 
 # Init non-blocking CPU check
 psutil.cpu_percent(interval=None)
@@ -479,6 +492,123 @@ def get_main_disk_usage():
         return 0.0
 
 
+def read_last_text_line(path, block_size=4096):
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            file_size = handle.tell()
+            if file_size <= 0:
+                return None
+
+            buffer = b""
+            offset = file_size
+            while offset > 0 and len(buffer) < (block_size * 8):
+                read_size = min(block_size, offset)
+                offset -= read_size
+                handle.seek(offset)
+                buffer = handle.read(read_size) + buffer
+                lines = buffer.splitlines()
+                for raw_line in reversed(lines):
+                    line = raw_line.decode("utf-8", "replace").strip()
+                    if line:
+                        return line
+    except Exception:
+        return None
+    return None
+
+
+def parse_mangohud_fps_line(line):
+    if not line:
+        return None
+
+    first_field = line.split(",", 1)[0].strip()
+    try:
+        value = float(first_field)
+    except ValueError:
+        return None
+
+    if value < 0 or value > 10000:
+        return None
+    return round(value, 1)
+
+
+def cleanup_mangohud_logs(force=False):
+    global next_mangohud_cleanup_at
+
+    now = time.time()
+    if not force and now < next_mangohud_cleanup_at:
+        return
+
+    next_mangohud_cleanup_at = now + MANGOHUD_CLEANUP_INTERVAL_SECONDS
+
+    try:
+        if not MANGOHUD_LOG_DIR.is_dir():
+            return
+
+        for path in MANGOHUD_LOG_DIR.iterdir():
+            if not path.is_file():
+                continue
+            try:
+                if (now - path.stat().st_mtime) > MANGOHUD_LOG_MAX_AGE_SECONDS:
+                    path.unlink(missing_ok=True)
+            except OSError:
+                continue
+    except Exception:
+        pass
+
+
+def get_mangohud_fps():
+    global mangohud_last_probe_at, mangohud_next_probe_delay, mangohud_last_fps_value
+
+    try:
+        now = time.time()
+        if (now - mangohud_last_probe_at) < mangohud_next_probe_delay:
+            return mangohud_last_fps_value
+
+        mangohud_last_probe_at = now
+        cleanup_mangohud_logs()
+
+        if not MANGOHUD_LOG_DIR.is_dir():
+            mangohud_last_fps_value = None
+            mangohud_next_probe_delay = MANGOHUD_IDLE_POLL_SECONDS
+            return None
+
+        latest_path = None
+        latest_mtime = 0.0
+        for path in MANGOHUD_LOG_DIR.iterdir():
+            if not path.is_file():
+                continue
+            if path.suffix.lower() != ".csv" or path.name.endswith("_summary.csv"):
+                continue
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            if stat.st_mtime > latest_mtime:
+                latest_mtime = stat.st_mtime
+                latest_path = path
+
+        if latest_path is None:
+            mangohud_last_fps_value = None
+            mangohud_next_probe_delay = MANGOHUD_IDLE_POLL_SECONDS
+            return None
+
+        if (now - latest_mtime) > MANGOHUD_FPS_STALE_SECONDS:
+            mangohud_last_fps_value = None
+            mangohud_next_probe_delay = MANGOHUD_IDLE_POLL_SECONDS
+            return None
+
+        line = read_last_text_line(latest_path)
+        fps_value = parse_mangohud_fps_line(line)
+        mangohud_last_fps_value = fps_value
+        mangohud_next_probe_delay = MANGOHUD_ACTIVE_POLL_SECONDS if fps_value is not None else MANGOHUD_IDLE_POLL_SECONDS
+        return fps_value
+    except Exception:
+        mangohud_last_fps_value = None
+        mangohud_next_probe_delay = MANGOHUD_IDLE_POLL_SECONDS
+        return None
+
+
 def cider_get(endpoint):
     return http_session.get(f"{CIDER_API_URL}/{endpoint}", timeout=0.8)
 
@@ -807,6 +937,7 @@ def build_stats_payload():
     ram_percent = get_cached_stat("ram", lambda: memory.percent, now)
     with stats_lock:
         cpu_value = stats_cache["cpu"]["value"]
+    fps_value = get_cached_stat("fps", get_mangohud_fps, now)
     return {
         "mode": "stats",
         "ui_config": get_ui_config(),
@@ -818,6 +949,8 @@ def build_stats_payload():
         "cpu_temp": get_cached_stat("cpu_temp", get_cpu_temp, now),
         "gpu_temp": get_cached_stat("gpu_temp", get_gpu_temp, now),
         "disk": get_cached_stat("disk", get_main_disk_usage, now),
+        "fps": fps_value,
+        "mangohud_active": fps_value is not None,
     }
 
 

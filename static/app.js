@@ -59,6 +59,8 @@
         const ramStatElem = document.getElementById('ram-stat');
         const ramDetailElem = document.getElementById('ram-detail');
         const diskStatElem = document.getElementById('disk-stat');
+        const fpsCardElem = document.getElementById('fps-card');
+        const fpsStatElem = document.getElementById('fps-stat');
         const cpuGaugeElem = document.getElementById('cpu-gauge');
         const gpuGaugeElem = document.getElementById('gpu-gauge');
         const ramFillElem = document.getElementById('ram-fill');
@@ -498,6 +500,8 @@
             const disk = Number(data.disk) || 0;
             const ramUsedGb = Number(data.ram_used_gb) || 0;
             const ramTotalGb = Number(data.ram_total_gb) || 0;
+            const fps = Number(data.fps);
+            const showFps = Boolean(data.mangohud_active) && Number.isFinite(fps) && fps > 0;
 
             cpuStatElem.textContent = `${Math.round(cpu)}%`;
             gpuStatElem.textContent = `${Math.round(gpu)}%`;
@@ -506,6 +510,7 @@
                 ? `${ramUsedGb.toFixed(1)} / ${ramTotalGb.toFixed(1)} GB used`
                 : '--';
             diskStatElem.textContent = `${disk.toFixed(1)} MB/s`;
+            fpsStatElem.textContent = showFps ? `${Math.round(fps)}` : '0';
 
             const diskPct = Math.min(100, (disk / 500) * 100);
             
@@ -513,6 +518,20 @@
             setGaugeValue(gpuGaugeElem, gpu);
             ramFillElem.style.height = `${ram}%`;
             diskBarElem.style.width = `${diskPct}%`;
+
+            fpsCardElem.classList.toggle('hidden', !showFps);
+            fpsCardElem.setAttribute('aria-hidden', showFps ? 'false' : 'true');
+            statsView.classList.toggle('has-fps-card', showFps);
+            fpsCardElem.classList.remove('is-good', 'is-warn', 'is-bad');
+            if (showFps) {
+                if (fps >= 100) {
+                    fpsCardElem.classList.add('is-good');
+                } else if (fps >= 70) {
+                    fpsCardElem.classList.add('is-warn');
+                } else {
+                    fpsCardElem.classList.add('is-bad');
+                }
+            }
 
             updateTempBox('cpu-temp-box', 'cpu-temp-stat', data.cpu_temp);
             updateTempBox('gpu-temp-box', 'gpu-temp-stat', data.gpu_temp);

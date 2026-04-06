@@ -35,6 +35,10 @@
             -webkit-tap-highlight-color: transparent;
         }
 
+        .hidden {
+            display: none !important;
+        }
+
         html, body {
             margin: 0;
             width: 100%;
@@ -556,6 +560,35 @@
                 linear-gradient(180deg, var(--stats-bg), color-mix(in srgb, var(--stats-bg) 82%, #000 18%));
         }
 
+        .stats-card-cpu {
+            grid-column: 1;
+            grid-row: 1;
+        }
+
+        .stats-card-gpu {
+            grid-column: 2;
+            grid-row: 1;
+        }
+
+        .stats-card-ram {
+            grid-column: 1;
+            grid-row: 2;
+        }
+
+        .stats-duo-slot {
+            grid-column: 2;
+            grid-row: 2;
+            min-width: 0;
+            min-height: 0;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr);
+            gap: 0;
+        }
+
+        .stats-duo-slot .stats-card {
+            height: 100%;
+        }
+
         .stats-card {
             padding: 20px 22px;
             border-radius: 30px;
@@ -605,6 +638,73 @@
         .stats-card-disk {
             --stats-accent: var(--stats-disk);
             --stats-accent-soft: var(--stats-disk-soft);
+        }
+
+        .stats-card-fps {
+            --stats-accent: var(--stats-cpu);
+            --stats-accent-soft: var(--stats-cpu-soft);
+        }
+
+        .stats-card-disk,
+        .stats-card-fps {
+            justify-content: center;
+            gap: 14px;
+        }
+
+        .stats-card-fps .stats-value {
+            transition: color 220ms ease;
+        }
+
+        .stats-card-fps.is-good .stats-value {
+            color: #7be495;
+        }
+
+        .stats-card-fps.is-warn .stats-value {
+            color: #ffd166;
+        }
+
+        .stats-card-fps.is-bad .stats-value {
+            color: #ff6b6b;
+        }
+
+        #stats-view.has-fps-card .stats-duo-slot {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 14px;
+        }
+
+        #stats-view.has-fps-card .stats-card-disk,
+        #stats-view.has-fps-card .stats-card-fps {
+            padding: 18px 18px;
+            gap: 12px;
+        }
+
+        #stats-view.has-fps-card .stats-card-disk .stats-left,
+        #stats-view.has-fps-card .stats-card-fps .stats-left {
+            gap: 8px;
+        }
+
+        #stats-view.has-fps-card .stats-card-disk .stats-icon-big,
+        #stats-view.has-fps-card .stats-card-fps .stats-icon-big {
+            width: 48px;
+            height: 48px;
+        }
+
+        #stats-view.has-fps-card .stats-card-disk .stats-value,
+        #stats-view.has-fps-card .stats-card-fps .stats-value {
+            font-size: clamp(2rem, 3.1vw, 2.8rem);
+        }
+
+        #stats-view.has-fps-card .stats-card-disk .stats-value {
+            font-size: clamp(1.35rem, 1.95vw, 1.85rem);
+        }
+
+        #stats-view.has-fps-card .stats-card-disk .stats-right,
+        #stats-view.has-fps-card .stats-card-fps .stats-right {
+            gap: 8px;
+        }
+
+        #stats-view.has-fps-card .stats-card-disk .stats-bar {
+            height: 13px;
         }
 
         .stats-left {
@@ -936,6 +1036,15 @@
                 gap: 14px;
             }
 
+            #stats-view.has-fps-card .stats-card-cpu,
+            #stats-view.has-fps-card .stats-card-gpu,
+            #stats-view.has-fps-card .stats-card-ram,
+            #stats-view.has-fps-card .stats-card-disk,
+            #stats-view.has-fps-card .stats-card-fps {
+                grid-column: auto;
+                grid-row: auto;
+            }
+
             .stats-card {
                 padding: 16px 18px;
                 gap: 14px;
@@ -1005,6 +1114,19 @@
                 grid-template-rows: none;
                 grid-auto-rows: minmax(160px, auto);
                 padding: 12px;
+                gap: 12px;
+            }
+
+            .stats-card-cpu,
+            .stats-card-gpu,
+            .stats-card-ram,
+            .stats-duo-slot {
+                grid-column: auto;
+                grid-row: auto;
+            }
+
+            #stats-view.has-fps-card .stats-duo-slot {
+                grid-template-columns: minmax(0, 1fr);
                 gap: 12px;
             }
 
