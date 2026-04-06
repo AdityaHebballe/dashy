@@ -273,13 +273,25 @@
             align-items: center;
             gap: 32px;
             min-width: 0;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .stats-card::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(circle at top right, rgba(255,255,255,0.08), transparent 42%);
+            pointer-events: none;
         }
 
         .stats-left {
             display: flex;
+            flex-direction: column;
             justify-content: center;
             align-items: center;
             flex-shrink: 0;
+            gap: 12px;
         }
 
         .stats-icon-big {
@@ -295,18 +307,23 @@
             flex: 1;
             gap: 6px;
             min-width: 0;
+            position: relative;
+            z-index: 1;
         }
 
         .stats-temp-right {
             display: flex;
             align-items: center;
             justify-content: flex-end;
-            padding-left: 20px;
+            padding-left: 8px;
             font-size: 2.5rem;
             font-weight: 700;
             font-variant-numeric: tabular-nums;
             letter-spacing: -0.04em;
-            min-width: 120px;
+            min-width: 132px;
+            flex-shrink: 0;
+            position: relative;
+            z-index: 1;
         }
 
         .stats-temp-right svg {
@@ -325,10 +342,11 @@
 
         .stats-label {
             color: var(--text-2);
-            font-size: 1.1rem;
+            font-size: 0.88rem;
             font-weight: 600;
             text-transform: uppercase;
             letter-spacing: 0.16em;
+            text-align: center;
         }
 
         .stats-temp-box {
@@ -359,6 +377,93 @@
             font-weight: 760;
             letter-spacing: -0.06em;
             line-height: 1;
+        }
+
+        .stats-subvalue {
+            color: var(--text-2);
+            font-size: 1.18rem;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .stats-gauge {
+            width: 156px;
+            height: 94px;
+            position: relative;
+        }
+
+        .stats-gauge svg {
+            width: 100%;
+            height: 100%;
+            overflow: visible;
+        }
+
+        .stats-gauge-track {
+            fill: none;
+            stroke: rgba(255, 255, 255, 0.1);
+            stroke-width: 10;
+            stroke-linecap: round;
+        }
+
+        .stats-gauge-progress {
+            fill: none;
+            stroke: rgba(255, 255, 255, 0.95);
+            stroke-width: 10;
+            stroke-linecap: round;
+            stroke-dasharray: 220;
+            stroke-dashoffset: 220;
+            transition: stroke-dashoffset 500ms ease;
+            filter: drop-shadow(0 0 10px rgba(255,255,255,0.18));
+        }
+
+        .stats-gauge-value {
+            position: absolute;
+            left: 50%;
+            bottom: 10px;
+            transform: translateX(-50%);
+            font-size: 2rem;
+            font-weight: 760;
+            letter-spacing: -0.05em;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .stats-ram-left {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            gap: 12px;
+            flex-shrink: 0;
+        }
+
+        .stats-ram-copy {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            flex: 1;
+            min-width: 0;
+            justify-content: center;
+        }
+
+        .stats-ram-stack {
+            width: 64px;
+            height: 164px;
+            padding: 10px;
+            border-radius: 24px;
+            background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.02));
+            border: 1px solid rgba(255,255,255,0.08);
+            display: flex;
+            align-items: flex-end;
+            flex-shrink: 0;
+        }
+
+        .stats-ram-fill {
+            width: 100%;
+            height: 0%;
+            border-radius: 16px;
+            background: linear-gradient(180deg, rgba(255,255,255,1), rgba(255,255,255,0.42));
+            transition: height 500ms ease;
+            box-shadow: 0 0 18px rgba(255,255,255,0.18);
         }
 
         .stats-bar {
@@ -433,6 +538,20 @@
                 flex-wrap: wrap;
             }
 
+            .stats-gauge {
+                width: 132px;
+                height: 84px;
+            }
+
+            .stats-gauge-value {
+                font-size: 1.7rem;
+            }
+
+            .stats-ram-stack {
+                width: 62px;
+                height: 136px;
+            }
+
             .stats-icon-big {
                 width: 52px;
                 height: 52px;
@@ -494,6 +613,11 @@
         }
 
         @media (max-height: 760px) and (orientation: landscape) {
+            .stats-card {
+                flex-wrap: nowrap;
+                align-items: center;
+            }
+
             .left-panel {
                 width: min(42%, 460px);
                 min-width: 260px;
@@ -523,6 +647,39 @@
                 width: 52px;
                 height: 52px;
                 font-size: 1.2rem;
+            }
+
+            .stats-temp-right {
+                width: auto;
+                min-width: 96px;
+                justify-content: flex-end;
+                padding-left: 6px;
+                font-size: 1.55rem;
+            }
+
+            .stats-temp-right svg {
+                width: 22px;
+                height: 22px;
+                margin-right: 6px;
+            }
+
+            .stats-gauge {
+                width: 132px;
+                height: 82px;
+            }
+
+            .stats-gauge-value {
+                font-size: 1.55rem;
+                bottom: 8px;
+            }
+
+            .stats-ram-stack {
+                width: 56px;
+                height: 128px;
+            }
+
+            .stats-subvalue {
+                font-size: 0.95rem;
             }
 
             #lyrics-container {
@@ -569,14 +726,17 @@
             <section id="stats-view">
                 <div class="stats-card">
                     <div class="stats-left">
+                        <div class="stats-label">CPU</div>
                         <svg class="stats-icon-big" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line></svg>
                     </div>
                     <div class="stats-right">
-                        <div class="stats-top">
-                            <div class="stats-label">CPU</div>
+                        <div class="stats-gauge">
+                            <svg viewBox="0 0 160 100" aria-hidden="true">
+                                <path class="stats-gauge-track" d="M20 84 A60 60 0 0 1 140 84"></path>
+                                <path class="stats-gauge-progress" id="cpu-gauge" d="M20 84 A60 60 0 0 1 140 84"></path>
+                            </svg>
+                            <div class="stats-gauge-value" id="cpu-stat">0%</div>
                         </div>
-                        <div class="stats-value" id="cpu-stat">0%</div>
-                        <div class="stats-bar"><div class="stats-bar-fill" id="cpu-bar"></div></div>
                     </div>
                     <div class="stats-temp-right temp-none" id="cpu-temp-box">
                         <span id="cpu-temp-stat">--</span>
@@ -584,29 +744,33 @@
                 </div>
                 <div class="stats-card">
                     <div class="stats-left">
+                        <div class="stats-label">GPU</div>
                         <svg class="stats-icon-big" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
                     </div>
                     <div class="stats-right">
-                        <div class="stats-top">
-                            <div class="stats-label">GPU</div>
+                        <div class="stats-gauge">
+                            <svg viewBox="0 0 160 100" aria-hidden="true">
+                                <path class="stats-gauge-track" d="M20 84 A60 60 0 0 1 140 84"></path>
+                                <path class="stats-gauge-progress" id="gpu-gauge" d="M20 84 A60 60 0 0 1 140 84"></path>
+                            </svg>
+                            <div class="stats-gauge-value" id="gpu-stat">0%</div>
                         </div>
-                        <div class="stats-value" id="gpu-stat">0%</div>
-                        <div class="stats-bar"><div class="stats-bar-fill" id="gpu-bar"></div></div>
                     </div>
                     <div class="stats-temp-right temp-none" id="gpu-temp-box">
                         <span id="gpu-temp-stat">--</span>
                     </div>
                 </div>
                 <div class="stats-card">
-                    <div class="stats-left">
+                    <div class="stats-ram-left">
+                        <div class="stats-label">RAM</div>
                         <svg class="stats-icon-big" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="10" rx="2" ry="2"></rect><path d="M6 7V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2"></path><path d="M6 17v2a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-2"></path><path d="M12 11v2"></path></svg>
                     </div>
-                    <div class="stats-right">
-                        <div class="stats-top">
-                            <div class="stats-label">RAM</div>
-                        </div>
+                    <div class="stats-ram-copy">
                         <div class="stats-value" id="ram-stat">0%</div>
-                        <div class="stats-bar"><div class="stats-bar-fill" id="ram-bar"></div></div>
+                        <div class="stats-subvalue" id="ram-detail">0.0 / 0.0 GB used</div>
+                    </div>
+                    <div class="stats-ram-stack">
+                        <div class="stats-ram-fill" id="ram-fill"></div>
                     </div>
                 </div>
                 <div class="stats-card">
@@ -661,11 +825,18 @@
         const cpuStatElem = document.getElementById('cpu-stat');
         const gpuStatElem = document.getElementById('gpu-stat');
         const ramStatElem = document.getElementById('ram-stat');
+        const ramDetailElem = document.getElementById('ram-detail');
         const diskStatElem = document.getElementById('disk-stat');
-        const cpuBarElem = document.getElementById('cpu-bar');
-        const gpuBarElem = document.getElementById('gpu-bar');
-        const ramBarElem = document.getElementById('ram-bar');
+        const cpuGaugeElem = document.getElementById('cpu-gauge');
+        const gpuGaugeElem = document.getElementById('gpu-gauge');
+        const ramFillElem = document.getElementById('ram-fill');
         const diskBarElem = document.getElementById('disk-bar');
+
+        function setGaugeValue(element, percent) {
+            const circumference = 220;
+            const normalized = Math.max(0, Math.min(100, percent));
+            element.style.strokeDashoffset = `${circumference - ((normalized / 100) * circumference)}`;
+        }
 
         function startInterpolation() {
             if (playbackTickTimeout) clearTimeout(playbackTickTimeout);
@@ -930,17 +1101,22 @@
             const gpu = clampPercent(data.gpu);
             const ram = clampPercent(data.ram);
             const disk = Number(data.disk) || 0;
+            const ramUsedGb = Number(data.ram_used_gb) || 0;
+            const ramTotalGb = Number(data.ram_total_gb) || 0;
 
             cpuStatElem.textContent = `${Math.round(cpu)}%`;
             gpuStatElem.textContent = `${Math.round(gpu)}%`;
             ramStatElem.textContent = `${Math.round(ram)}%`;
+            ramDetailElem.textContent = ramTotalGb > 0
+                ? `${ramUsedGb.toFixed(1)} / ${ramTotalGb.toFixed(1)} GB used`
+                : '--';
             diskStatElem.textContent = `${disk.toFixed(1)} MB/s`;
 
             const diskPct = Math.min(100, (disk / 500) * 100);
             
-            cpuBarElem.style.width = `${cpu}%`;
-            gpuBarElem.style.width = `${gpu}%`;
-            ramBarElem.style.width = `${ram}%`;
+            setGaugeValue(cpuGaugeElem, cpu);
+            setGaugeValue(gpuGaugeElem, gpu);
+            ramFillElem.style.height = `${ram}%`;
             diskBarElem.style.width = `${diskPct}%`;
 
             updateTempBox('cpu-temp-box', 'cpu-temp-stat', data.cpu_temp);

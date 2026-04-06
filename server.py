@@ -692,10 +692,14 @@ def fetch_best_lyrics(artist, track, album, duration_ms):
 
 def build_stats_payload():
     now = time.time()
+    memory = psutil.virtual_memory()
+    ram_percent = get_cached_stat("ram", lambda: memory.percent, now)
     return {
         "mode": "stats",
         "cpu": get_cached_stat("cpu", lambda: psutil.cpu_percent(interval=None), now),
-        "ram": get_cached_stat("ram", lambda: psutil.virtual_memory().percent, now),
+        "ram": ram_percent,
+        "ram_used_gb": round((memory.total - memory.available) / (1024 ** 3), 1),
+        "ram_total_gb": round(memory.total / (1024 ** 3), 1),
         "gpu": get_cached_stat("gpu", get_amd_gpu_stats, now),
         "cpu_temp": get_cached_stat("cpu_temp", get_cpu_temp, now),
         "gpu_temp": get_cached_stat("gpu_temp", get_gpu_temp, now),
