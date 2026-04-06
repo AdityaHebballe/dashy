@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Dashy Config
+Comment=Configure the Dashy dashboard
+Exec=dashy-config
+Icon=dashy
+Terminal=false
+Categories=Settings;Utility;
+StartupNotify=true

@@ -109,7 +109,7 @@
                 active_lyric_scale: Number(config.active_lyric_scale) || 1.03,
                 control_mode: config.control_mode === 'swipe' ? 'swipe' : 'buttons',
                 swipe_start_threshold: Number(config.swipe_start_threshold) || 6,
-                swipe_commit_threshold: Number(config.swipe_commit_threshold) || 22,
+                swipe_commit_threshold: Number(config.swipe_commit_threshold) || 72,
             };
             const nextKey = JSON.stringify(normalized);
             if (nextKey === currentUiConfigKey) return;

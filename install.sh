@@ -10,6 +10,10 @@ SYSTEM_SERVICE_FILE="/etc/systemd/system/${SYSTEM_SERVICE_NAME}"
 SYSTEM_SCRIPT_FILE="/usr/local/bin/dashy-sleep-pc"
 LOCAL_BIN_DIR="${HOME}/.local/bin"
 CONFIG_LAUNCHER="${LOCAL_BIN_DIR}/dashy-config"
+APPLICATIONS_DIR="${HOME}/.local/share/applications"
+ICONS_DIR="${HOME}/.local/share/icons/hicolor/scalable/apps"
+DESKTOP_FILE="${APPLICATIONS_DIR}/dashy-config.desktop"
+ICON_FILE="${ICONS_DIR}/dashy.svg"
 PYTHON_BIN="${PYTHON_BIN:-$(command -v python3)}"
 CONFIG_PYTHON="/usr/bin/python3"
 VENV_DIR="${INSTALL_DIR}/.venv"
@@ -27,22 +31,31 @@ fi
 mkdir -p "${INSTALL_DIR}"
 mkdir -p "${SYSTEMD_DIR}"
 mkdir -p "${LOCAL_BIN_DIR}"
+mkdir -p "${APPLICATIONS_DIR}"
+mkdir -p "${ICONS_DIR}"
 mkdir -p "${INSTALL_DIR}/static"
 mkdir -p "${INSTALL_DIR}/scripts"
+mkdir -p "${INSTALL_DIR}/assets"
 
 install -m 0644 server.py "${INSTALL_DIR}/server.py"
 install -m 0644 index.html "${INSTALL_DIR}/index.html"
 install -m 0644 dashy_config.py "${INSTALL_DIR}/dashy_config.py"
+install -m 0644 dashy-config.desktop "${INSTALL_DIR}/dashy-config.desktop"
 install -m 0644 requirements.txt "${INSTALL_DIR}/requirements.txt"
 install -m 0644 static/styles.css "${INSTALL_DIR}/static/styles.css"
 install -m 0644 static/app.js "${INSTALL_DIR}/static/app.js"
 install -m 0755 scripts/dashy-sleep-pc.sh "${INSTALL_DIR}/scripts/dashy-sleep-pc.sh"
+install -m 0644 assets/dashy.svg "${INSTALL_DIR}/assets/dashy.svg"
 
 cat > "${CONFIG_LAUNCHER}" <<EOF
 #!/usr/bin/env bash
 exec "${CONFIG_PYTHON}" "${INSTALL_DIR}/dashy_config.py" "\$@"
 EOF
 chmod 0755 "${CONFIG_LAUNCHER}"
+
+install -m 0644 "${INSTALL_DIR}/dashy-config.desktop" "${DESKTOP_FILE}"
+install -m 0644 "${INSTALL_DIR}/assets/dashy.svg" "${ICON_FILE}"
+sed -i "s|^Icon=dashy$|Icon=${ICON_FILE}|" "${DESKTOP_FILE}"
 
 "${PYTHON_BIN}" -m venv "${VENV_DIR}"
 "${VENV_PIP}" install --upgrade pip

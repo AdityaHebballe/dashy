@@ -7,7 +7,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gio, Gtk
+from gi.repository import Adw, Gtk
 
 
 CONFIG_URL = "http://127.0.0.1:5000/api/config"
@@ -17,7 +17,7 @@ DEFAULTS = {
     "active_lyric_scale": 1.03,
     "control_mode": "buttons",
     "swipe_start_threshold": 6.0,
-    "swipe_commit_threshold": 22.0,
+    "swipe_commit_threshold": 72.0,
 }
 CONTROL_MODES = ("buttons", "swipe")
 CONTROL_MODE_LABELS = {
@@ -38,24 +38,34 @@ def http_json(url, method="GET", payload=None):
 
 
 class SliderRow(Adw.ActionRow):
-    def __init__(self, title, subtitle, lower, upper, step, digits=2):
+    def __init__(self, key, title, subtitle, lower, upper, step, default_value, digits=2):
         super().__init__(title=title, subtitle=subtitle)
+        self.key = key
+        self.default_value = default_value
         self.adjustment = Gtk.Adjustment(
-            value=lower,
+            value=default_value,
             lower=lower,
             upper=upper,
             step_increment=step,
             page_increment=step * 4,
         )
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         box.set_hexpand(True)
+        box.set_halign(Gtk.Align.FILL)
 
         self.scale = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL, adjustment=self.adjustment)
         self.scale.set_hexpand(True)
+        self.scale.set_size_request(260, -1)
         self.scale.set_digits(digits)
         self.scale.set_draw_value(True)
         self.scale.set_value_pos(Gtk.PositionType.RIGHT)
         box.append(self.scale)
+
+        self.reset_button = Gtk.Button(icon_name="view-refresh-symbolic")
+        self.reset_button.set_tooltip_text("Reset this value")
+        self.reset_button.set_valign(Gtk.Align.CENTER)
+        self.reset_button.connect("clicked", self.on_reset_clicked)
+        box.append(self.reset_button)
 
         self.add_suffix(box)
         self.set_activatable(False)
@@ -66,11 +76,21 @@ class SliderRow(Adw.ActionRow):
     def set_value(self, value):
         self.scale.set_value(float(value))
 
+    def on_reset_clicked(self, _button):
+        self.set_value(self.default_value)
+
+    def set_sensitive(self, sensitive):
+        super().set_sensitive(sensitive)
+        self.scale.set_sensitive(sensitive)
+        self.reset_button.set_sensitive(sensitive)
+
 
 class DashyConfigWindow(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="Dashy Config")
-        self.set_default_size(520, 520)
+        self.set_default_size(1000, 1000)
+        self.set_resizable(True)
+        self.set_size_request(1000, 1000)
 
         self.toast_overlay = Adw.ToastOverlay()
         self.set_content(self.toast_overlay)
@@ -108,29 +128,35 @@ class DashyConfigWindow(Adw.ApplicationWindow):
         page.add(display_group)
 
         self.lyrics_row = SliderRow(
+            "lyrics_font_scale",
             "Lyrics Size",
             "Scales the lyrics column without changing layout structure.",
             0.8,
             1.5,
             0.02,
+            DEFAULTS["lyrics_font_scale"],
         )
         display_group.add(self.lyrics_row)
 
         self.album_row = SliderRow(
+            "album_art_scale",
             "Album Art Size",
             "Adjusts the artwork panel size within the existing responsive layout.",
             0.85,
             1.25,
             0.01,
+            DEFAULTS["album_art_scale"],
         )
         display_group.add(self.album_row)
 
         self.highlight_row = SliderRow(
+            "active_lyric_scale",
             "Highlight Scale",
             "Controls how much larger the active lyric appears.",
             1.0,
             1.12,
             0.005,
+            DEFAULTS["active_lyric_scale"],
             digits=3,
         )
         display_group.add(self.highlight_row)
@@ -145,24 +171,29 @@ class DashyConfigWindow(Adw.ApplicationWindow):
         self.control_mode_row.set_subtitle("Swipe mode enables tap-to-pause and left/right track gestures on the album art.")
         self.control_mode_model = Gtk.StringList.new([CONTROL_MODE_LABELS[mode] for mode in CONTROL_MODES])
         self.control_mode_row.set_model(self.control_mode_model)
+        self.control_mode_row.connect("notify::selected", self.on_control_mode_changed)
         controls_group.add(self.control_mode_row)
 
         self.swipe_start_row = SliderRow(
+            "swipe_start_threshold",
             "Swipe Start Threshold",
             "How far you need to drag before Dashy treats it as a swipe.",
             2.0,
             24.0,
             1.0,
+            DEFAULTS["swipe_start_threshold"],
             digits=0,
         )
         controls_group.add(self.swipe_start_row)
 
         self.swipe_commit_row = SliderRow(
+            "swipe_commit_threshold",
             "Swipe Commit Threshold",
             "How far you need to drag before the previous/next action triggers on release.",
             8.0,
             72.0,
             2.0,
+            DEFAULTS["swipe_commit_threshold"],
             digits=0,
         )
         controls_group.add(self.swipe_commit_row)
@@ -207,6 +238,7 @@ class DashyConfigWindow(Adw.ApplicationWindow):
         if control_mode not in CONTROL_MODES:
             control_mode = DEFAULTS["control_mode"]
         self.control_mode_row.set_selected(CONTROL_MODES.index(control_mode))
+        self.update_swipe_row_state()
 
     def load_current_config(self):
         try:
@@ -239,6 +271,16 @@ class DashyConfigWindow(Adw.ApplicationWindow):
 
     def on_refresh(self, _button):
         self.load_current_config()
+
+    def on_control_mode_changed(self, _row, _pspec):
+        self.update_swipe_row_state()
+
+    def update_swipe_row_state(self):
+        selected = self.control_mode_row.get_selected()
+        control_mode = CONTROL_MODES[selected] if 0 <= selected < len(CONTROL_MODES) else DEFAULTS["control_mode"]
+        swipe_enabled = control_mode == "swipe"
+        self.swipe_start_row.set_sensitive(swipe_enabled)
+        self.swipe_commit_row.set_sensitive(swipe_enabled)
 
 
 class DashyConfigApp(Adw.Application):

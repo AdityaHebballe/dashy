@@ -32,7 +32,7 @@ DEFAULT_UI_CONFIG = {
     "active_lyric_scale": 1.03,
     "control_mode": "buttons",
     "swipe_start_threshold": 6.0,
-    "swipe_commit_threshold": 22.0,
+    "swipe_commit_threshold": 72.0,
 }
 
 # --- CACHE ---
