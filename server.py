@@ -18,7 +18,6 @@ app = Flask(__name__)
 
 # --- CONFIGURATION ---
 CIDER_API_URL = "http://127.0.0.1:10767/api/v1/playback"
-CIDER_HEADERS = {"apitoken": ""}  # Add your token here if you didn't disable auth
 LRCLIB_BASE_URL = "https://lrclib.net/api"
 MUSIXMATCH_BASE = "https://apic-desktop.musixmatch.com/ws/1.1/"
 APP_HOST = os.getenv("DASHY_HOST", "0.0.0.0")
@@ -387,11 +386,11 @@ def get_main_disk_usage():
 
 
 def cider_get(endpoint):
-    return http_session.get(f"{CIDER_API_URL}/{endpoint}", headers=CIDER_HEADERS, timeout=0.8)
+    return http_session.get(f"{CIDER_API_URL}/{endpoint}", timeout=0.8)
 
 
 def cider_post(endpoint):
-    return http_session.post(f"{CIDER_API_URL}/{endpoint}", headers=CIDER_HEADERS, timeout=0.8)
+    return http_session.post(f"{CIDER_API_URL}/{endpoint}", timeout=0.8)
 
 
 def normalize_text(value):

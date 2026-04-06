@@ -188,6 +188,8 @@
             min-width: 0;
             overflow: hidden;
             padding: 0;
+            display: flex;
+            justify-content: flex-start;
         }
 
 
@@ -196,6 +198,7 @@
             position: relative;
             z-index: 1;
             height: 100%;
+            width: min(100%, 39rem);
             overflow-y: auto;
             scroll-behavior: auto;
             padding: 50vh clamp(20px, 5vw, 72px) 50vh clamp(18px, 4vw, 56px);
@@ -226,6 +229,8 @@
             max-width: 34rem;
             width: 100%;
             align-self: center;
+            overflow-wrap: anywhere;
+            word-break: break-word;
         }
 
         .lyric-line.previous {
@@ -237,7 +242,7 @@
         .lyric-line.active {
             color: var(--text-1);
             opacity: 1;
-            transform: scale(1.03);
+            transform: scale(1.015);
             text-shadow: 0 0 26px rgba(255, 255, 255, 0.1);
         }
 
@@ -512,6 +517,7 @@
             }
 
             #lyrics-container {
+                width: 100%;
                 padding-top: 18vh;
                 padding-bottom: 22vh;
             }
@@ -795,6 +801,9 @@
             }
 
             #lyrics-container {
+                width: min(100%, 35rem);
+                padding-left: 14px;
+                padding-right: 18px;
                 padding-top: 38vh;
                 padding-bottom: 38vh;
             }
