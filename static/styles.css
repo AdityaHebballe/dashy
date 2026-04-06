@@ -545,9 +545,10 @@
             display: grid;
             grid-template-columns: repeat(2, minmax(0, 1fr));
             grid-template-rows: repeat(2, minmax(0, 1fr));
+            grid-auto-rows: minmax(0, 1fr);
             gap: 18px;
             padding: 20px;
-            align-content: center;
+            align-content: stretch;
             overflow: auto;
             background:
                 radial-gradient(circle at top left, rgba(255, 255, 255, 0.04), transparent 30%),
@@ -563,6 +564,7 @@
             display: flex;
             gap: 18px;
             min-width: 0;
+            min-height: 0;
             position: relative;
             overflow: hidden;
             align-items: center;
@@ -586,11 +588,13 @@
         .stats-card-cpu {
             --stats-accent: var(--stats-cpu);
             --stats-accent-soft: var(--stats-cpu-soft);
+            padding-right: 160px;
         }
 
         .stats-card-gpu {
             --stats-accent: var(--stats-gpu);
             --stats-accent-soft: var(--stats-gpu-soft);
+            padding-right: 160px;
         }
 
         .stats-card-ram {
@@ -638,7 +642,17 @@
 
         .stats-card-cpu .stats-right,
         .stats-card-gpu .stats-right {
-            flex: 0 1 212px;
+            flex: 0 1 248px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .stats-card-cpu .stats-temp-right,
+        .stats-card-gpu .stats-temp-right {
+            position: absolute;
+            right: 22px;
+            top: 50%;
+            transform: translateY(-50%);
         }
 
         .stats-temp-right {
@@ -647,22 +661,29 @@
             justify-content: flex-end;
             padding-left: 8px;
             padding-right: 0;
-            font-size: 1.75rem;
+            font-size: 1.95rem;
             font-weight: 650;
             font-variant-numeric: tabular-nums;
             letter-spacing: -0.04em;
-            min-width: 128px;
+            min-width: 144px;
             flex-shrink: 0;
             color: var(--stats-text-1);
             position: relative;
             z-index: 1;
         }
 
+        .stats-temp-right .temp-value {
+            display: block;
+            line-height: 1;
+        }
+
         .stats-temp-right svg {
-            width: 24px;
-            height: 24px;
-            margin-right: 6px;
+            width: 0.92em;
+            height: 0.92em;
+            margin-right: 0;
             opacity: 0.9;
+            flex-shrink: 0;
+            display: block;
         }
 
         .stats-top {
@@ -723,8 +744,8 @@
 
         .stats-gauge {
             width: 100%;
-            max-width: 212px;
-            height: 118px;
+            max-width: 248px;
+            height: 136px;
             position: relative;
             align-self: center;
             flex: 0 0 auto;
@@ -757,10 +778,10 @@
         .stats-gauge-value {
             position: absolute;
             left: 50%;
-            bottom: 12px;
+            bottom: 16px;
             transform: translateX(-50%);
             color: var(--stats-text-1);
-            font-size: 2.3rem;
+            font-size: 2.8rem;
             font-weight: 760;
             letter-spacing: -0.05em;
             font-variant-numeric: tabular-nums;
@@ -909,49 +930,133 @@
             }
         }
 
-        @media (max-width: 700px) {
+        @media (max-width: 980px), (max-height: 700px) {
             #stats-view {
-                grid-template-columns: repeat(2, minmax(0, 1fr));
-                grid-template-rows: repeat(2, minmax(0, 1fr));
                 padding: 14px;
                 gap: 14px;
             }
 
             .stats-card {
-                padding: 18px;
+                padding: 16px 18px;
                 gap: 14px;
-                flex-wrap: wrap;
-            }
-
-            .stats-gauge {
-                max-width: 160px;
-                height: 92px;
-            }
-
-            .stats-gauge-value {
-                font-size: 1.75rem;
-            }
-
-            .stats-ram-stack {
-                width: 50px;
-                height: 130px;
             }
 
             .stats-icon-big {
-                width: 52px;
-                height: 52px;
+                width: 50px;
+                height: 50px;
+            }
+
+            .stats-card-cpu .stats-right,
+            .stats-card-gpu .stats-right {
+                flex: 0 1 248px;
+            }
+
+            .stats-card-cpu,
+            .stats-card-gpu {
+                padding-right: 160px;
+            }
+
+            .stats-card-cpu .stats-temp-right,
+            .stats-card-gpu .stats-temp-right {
+                right: 22px;
+            }
+
+            .stats-gauge {
+                max-width: 248px;
+                height: 136px;
+            }
+
+            .stats-gauge-value {
+                font-size: 2.8rem;
+                bottom: 16px;
             }
 
             .stats-temp-right {
-                min-width: 0;
-                width: 100%;
-                justify-content: flex-start;
-                padding-left: 0;
-                font-size: 1.3rem;
+                min-width: 144px;
+                font-size: 1.95rem;
+            }
+
+            .stats-temp-right svg {
+                width: 1em;
+                height: 1em;
             }
 
             .stats-value {
-                font-size: clamp(2rem, 8vw, 3rem);
+                font-size: clamp(2rem, 5vw, 3rem);
+            }
+
+            .stats-subvalue {
+                font-size: 0.92rem;
+            }
+
+            .stats-ram-stack {
+                width: 46px;
+                height: 132px;
+            }
+
+            .stats-bar {
+                height: 12px;
+            }
+        }
+
+        @media (max-width: 700px) {
+            #stats-view {
+                grid-template-columns: minmax(0, 1fr);
+                grid-template-rows: none;
+                grid-auto-rows: minmax(160px, auto);
+                padding: 12px;
+                gap: 12px;
+            }
+
+            .stats-card {
+                padding: 16px;
+                gap: 12px;
+                flex-wrap: nowrap;
+            }
+
+            .stats-card-cpu,
+            .stats-card-gpu {
+                padding-right: 120px;
+            }
+
+            .stats-gauge {
+                max-width: 188px;
+                height: 104px;
+            }
+
+            .stats-gauge-value {
+                font-size: 2rem;
+            }
+
+            .stats-ram-stack {
+                width: 42px;
+                height: 112px;
+            }
+
+            .stats-icon-big {
+                width: 44px;
+                height: 44px;
+            }
+
+            .stats-temp-right {
+                min-width: 96px;
+                width: auto;
+                justify-content: flex-end;
+                padding-left: 2px;
+                font-size: 1.45rem;
+                position: absolute;
+                right: 16px;
+                top: 50%;
+                transform: translateY(-50%);
+            }
+
+            .stats-temp-right svg {
+                width: 1em;
+                height: 1em;
+            }
+
+            .stats-value {
+                font-size: clamp(1.7rem, 7vw, 2.5rem);
             }
 
             .stats-label {
@@ -997,7 +1102,7 @@
             }
         }
 
-        @media (orientation: portrait) and (max-aspect-ratio: 10/21) {
+        @media (orientation: portrait) and (max-aspect-ratio: 10/21) and (min-width: 701px) {
             #stats-view {
                 grid-template-columns: repeat(2, minmax(0, 1fr));
                 grid-template-rows: repeat(2, minmax(0, 1fr));
@@ -1035,6 +1140,8 @@
                 min-width: 0;
                 width: 100%;
                 justify-content: center;
+                position: static;
+                transform: none;
             }
 
             .stats-temp-right svg {
@@ -1044,14 +1151,14 @@
             }
 
             .stats-gauge {
-                width: min(100%, 132px);
-                height: 80px;
+                width: min(100%, 150px);
+                height: 88px;
                 margin: 0 auto;
             }
 
             .stats-gauge-value {
-                font-size: 1.35rem;
-                bottom: 6px;
+                font-size: 1.5rem;
+                bottom: 7px;
             }
 
             .stats-bar {
@@ -1092,13 +1199,13 @@
             }
 
             .stats-temp-right svg {
-                width: 16px;
-                height: 16px;
+                width: 18px;
+                height: 18px;
                 margin-right: 4px;
             }
         }
 
-        @media (max-height: 760px) and (orientation: landscape) {
+        @media (max-height: 700px) and (orientation: landscape) {
             .left-panel {
                 width: min(42%, 460px);
                 min-width: 260px;
@@ -1132,28 +1239,41 @@
 
             .stats-temp-right {
                 width: auto;
-                min-width: 74px;
+                min-width: 124px;
                 justify-content: flex-end;
                 padding-left: 2px;
-                font-size: 1.45rem;
+                font-size: 1.88rem;
+            }
+
+            .stats-card-cpu,
+            .stats-card-gpu {
+                padding-right: 110px;
+            }
+
+            .stats-card-cpu .stats-temp-right,
+            .stats-card-gpu .stats-temp-right {
+                position: absolute;
+                right: 14px;
+                top: 50%;
+                transform: translateY(-50%);
             }
 
             .stats-temp-right svg {
-                width: 14px;
-                height: 14px;
-                margin-right: 5px;
+                width: 0.92em;
+                height: 0.92em;
+                margin-right: 0;
             }
 
             .stats-gauge {
-                max-width: 166px;
-                height: 82px;
+                max-width: 232px;
+                height: 126px;
                 margin-left: auto;
                 margin-right: auto;
             }
 
             .stats-gauge-value {
-                font-size: 1.7rem;
-                bottom: 8px;
+                font-size: 2.5rem;
+                bottom: 14px;
             }
 
             .stats-ram-stack {
@@ -1167,7 +1287,7 @@
 
             .stats-card-cpu .stats-right,
             .stats-card-gpu .stats-right {
-                flex: 0 1 166px;
+                flex: 0 1 232px;
             }
 
             .stats-subvalue {
