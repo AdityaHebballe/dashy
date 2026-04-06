@@ -78,6 +78,24 @@
             cpu: { className: '', text: '', hasValue: false },
             gpu: { className: '', text: '', hasValue: false },
         };
+        const statsRenderState = {
+            cpuText: '',
+            gpuText: '',
+            ramText: '',
+            ramDetail: '',
+            diskText: '',
+            fpsText: '',
+            fpsGameName: '',
+            cpuGaugeOffset: '',
+            gpuGaugeOffset: '',
+            ramFillHeight: '',
+            diskBarWidth: '',
+            fpsHidden: null,
+            fpsAriaHidden: '',
+            hasFpsCard: null,
+            fpsClassName: '',
+            hasGameArt: null,
+        };
         const musicRenderState = {
             track: '',
             artist: '',
@@ -92,6 +110,45 @@
             const circumference = 220;
             const normalized = Math.max(0, Math.min(100, percent));
             element.style.strokeDashoffset = `${circumference - ((normalized / 100) * circumference)}`;
+        }
+
+        function setTextIfChanged(element, value, key, state) {
+            if (state[key] === value) return;
+            element.textContent = value;
+            state[key] = value;
+        }
+
+        function setStyleIfChanged(element, property, value, key, state) {
+            if (state[key] === value) return;
+            element.style[property] = value;
+            state[key] = value;
+        }
+
+        function setGaugeValueIfChanged(element, percent, key, state) {
+            const circumference = 220;
+            const normalized = Math.max(0, Math.min(100, percent));
+            const nextOffset = `${circumference - ((normalized / 100) * circumference)}`;
+            if (state[key] === nextOffset) return;
+            element.style.strokeDashoffset = nextOffset;
+            state[key] = nextOffset;
+        }
+
+        function setClassNameIfChanged(element, className, key, state) {
+            if (state[key] === className) return;
+            element.className = className;
+            state[key] = className;
+        }
+
+        function toggleClassIfChanged(element, className, enabled, key, state) {
+            if (state[key] === enabled) return;
+            element.classList.toggle(className, enabled);
+            state[key] = enabled;
+        }
+
+        function setAttributeIfChanged(element, attribute, value, key, state) {
+            if (state[key] === value) return;
+            element.setAttribute(attribute, value);
+            state[key] = value;
         }
 
         function setProgressScale(progress) {
@@ -558,15 +615,18 @@
             const gameArtUrl = data.game_art?.selected_image_url || '';
             const gameFpsAssetUrl = data.game_art?.fps_asset_url || data.game_art?.fps_asset_thumb_url || '';
 
-            cpuStatElem.textContent = `${Math.round(cpu)}%`;
-            gpuStatElem.textContent = `${Math.round(gpu)}%`;
-            ramStatElem.textContent = `${Math.round(ram)}%`;
-            ramDetailElem.textContent = ramTotalGb > 0
-                ? `${ramUsedGb.toFixed(1)} / ${ramTotalGb.toFixed(1)} GB used`
-                : '--';
-            diskStatElem.textContent = `${disk.toFixed(1)} MB/s`;
-            fpsStatElem.textContent = showFps ? `${Math.round(fps)}` : '0';
-            fpsGameNameElem.textContent = showFps ? gameName : '';
+            setTextIfChanged(cpuStatElem, `${Math.round(cpu)}%`, 'cpuText', statsRenderState);
+            setTextIfChanged(gpuStatElem, `${Math.round(gpu)}%`, 'gpuText', statsRenderState);
+            setTextIfChanged(ramStatElem, `${Math.round(ram)}%`, 'ramText', statsRenderState);
+            setTextIfChanged(
+                ramDetailElem,
+                ramTotalGb > 0 ? `${ramUsedGb.toFixed(1)} / ${ramTotalGb.toFixed(1)} GB used` : '--',
+                'ramDetail',
+                statsRenderState
+            );
+            setTextIfChanged(diskStatElem, `${disk.toFixed(1)} MB/s`, 'diskText', statsRenderState);
+            setTextIfChanged(fpsStatElem, showFps ? `${Math.round(fps)}` : '0', 'fpsText', statsRenderState);
+            setTextIfChanged(fpsGameNameElem, showFps ? gameName : '', 'fpsGameName', statsRenderState);
             if (showFps && gameFpsAssetUrl) {
                 if (currentFpsAssetUrl !== gameFpsAssetUrl) {
                     fpsGameIconElem.setAttribute('src', gameFpsAssetUrl);
@@ -585,30 +645,31 @@
 
             const diskPct = Math.min(100, (disk / 500) * 100);
             
-            setGaugeValue(cpuGaugeElem, cpu);
-            setGaugeValue(gpuGaugeElem, gpu);
-            ramFillElem.style.height = `${ram}%`;
-            diskBarElem.style.width = `${diskPct}%`;
+            setGaugeValueIfChanged(cpuGaugeElem, cpu, 'cpuGaugeOffset', statsRenderState);
+            setGaugeValueIfChanged(gpuGaugeElem, gpu, 'gpuGaugeOffset', statsRenderState);
+            setStyleIfChanged(ramFillElem, 'height', `${ram}%`, 'ramFillHeight', statsRenderState);
+            setStyleIfChanged(diskBarElem, 'width', `${diskPct}%`, 'diskBarWidth', statsRenderState);
 
-            fpsCardElem.classList.toggle('hidden', !showFps);
-            fpsCardElem.setAttribute('aria-hidden', showFps ? 'false' : 'true');
-            statsView.classList.toggle('has-fps-card', showFps);
-            fpsCardElem.classList.remove('is-good', 'is-warn', 'is-bad');
-            if (showFps) {
-                if (fps >= 100) {
-                    fpsCardElem.classList.add('is-good');
-                } else if (fps >= 70) {
-                    fpsCardElem.classList.add('is-warn');
-                } else {
-                    fpsCardElem.classList.add('is-bad');
-                }
+            toggleClassIfChanged(fpsCardElem, 'hidden', !showFps, 'fpsHidden', statsRenderState);
+            setAttributeIfChanged(fpsCardElem, 'aria-hidden', showFps ? 'false' : 'true', 'fpsAriaHidden', statsRenderState);
+            toggleClassIfChanged(statsView, 'has-fps-card', showFps, 'hasFpsCard', statsRenderState);
+            let fpsClassName = 'stats-card stats-card-fps';
+            if (!showFps) {
+                fpsClassName += ' hidden';
+            } else if (fps >= 100) {
+                fpsClassName += ' is-good';
+            } else if (fps >= 70) {
+                fpsClassName += ' is-warn';
+            } else {
+                fpsClassName += ' is-bad';
             }
+            setClassNameIfChanged(fpsCardElem, fpsClassName, 'fpsClassName', statsRenderState);
 
             if (currentStatsGameArtUrl !== gameArtUrl) {
                 currentStatsGameArtUrl = gameArtUrl;
                 document.documentElement.style.setProperty('--stats-game-art-image', gameArtUrl ? `url("${gameArtUrl}")` : 'none');
-                statsView.classList.toggle('has-game-art', Boolean(gameArtUrl));
             }
+            toggleClassIfChanged(statsView, 'has-game-art', Boolean(gameArtUrl), 'hasGameArt', statsRenderState);
 
             updateTempBox(cpuTempBoxElem, cpuTempStatElem, cpuTempIconElem, data.cpu_temp, tempBoxState.cpu);
             updateTempBox(gpuTempBoxElem, gpuTempStatElem, gpuTempIconElem, data.gpu_temp, tempBoxState.gpu);
