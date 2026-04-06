@@ -6,7 +6,7 @@ import json
 import hashlib
 import socket
 from concurrent.futures import ThreadPoolExecutor
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from pathlib import Path
 from urllib.parse import quote
 
@@ -51,9 +51,9 @@ stats_cache = {
     "gpu_temp": {"value": None, "updated_at": 0.0},
     "ram": {"value": 0.0, "updated_at": 0.0},
 }
+cpu_samples = deque(maxlen=4)
 
 STATS_INTERVALS = {
-    "cpu": 2.0,
     "gpu": 2.0,
     "disk": 2.0,
     "cpu_temp": 3.0,
@@ -70,6 +70,24 @@ try:
 except Exception:
     last_disk_bytes = 0
 last_disk_time = time.time()
+
+
+def cpu_sampler_loop():
+    while True:
+        try:
+            sample = psutil.cpu_percent(interval=None)
+            cpu_samples.append(sample)
+            averaged = round(sum(cpu_samples) / len(cpu_samples), 1) if cpu_samples else sample
+            with lyrics_lock:
+                stats_cache["cpu"]["value"] = averaged
+                stats_cache["cpu"]["updated_at"] = time.time()
+        except Exception:
+            pass
+        time.sleep(1.0)
+
+
+cpu_sampler_thread = threading.Thread(target=cpu_sampler_loop, daemon=True)
+cpu_sampler_thread.start()
 
 
 def estimate_lyrics_payload_size(track_id, payload):
@@ -694,9 +712,11 @@ def build_stats_payload():
     now = time.time()
     memory = psutil.virtual_memory()
     ram_percent = get_cached_stat("ram", lambda: memory.percent, now)
+    with lyrics_lock:
+        cpu_value = stats_cache["cpu"]["value"]
     return {
         "mode": "stats",
-        "cpu": get_cached_stat("cpu", lambda: psutil.cpu_percent(interval=None), now),
+        "cpu": cpu_value,
         "ram": ram_percent,
         "ram_used_gb": round((memory.total - memory.available) / (1024 ** 3), 1),
         "ram_total_gb": round(memory.total / (1024 ** 3), 1),

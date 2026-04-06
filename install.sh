@@ -19,10 +19,13 @@ fi
 
 mkdir -p "${INSTALL_DIR}"
 mkdir -p "${SYSTEMD_DIR}"
+mkdir -p "${INSTALL_DIR}/static"
 
 install -m 0644 server.py "${INSTALL_DIR}/server.py"
 install -m 0644 index.html "${INSTALL_DIR}/index.html"
 install -m 0644 requirements.txt "${INSTALL_DIR}/requirements.txt"
+install -m 0644 static/styles.css "${INSTALL_DIR}/static/styles.css"
+install -m 0644 static/app.js "${INSTALL_DIR}/static/app.js"
 
 "${PYTHON_BIN}" -m venv "${VENV_DIR}"
 "${VENV_PIP}" install --upgrade pip
