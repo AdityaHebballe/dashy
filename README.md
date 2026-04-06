@@ -2,6 +2,16 @@
 
 LAN-accessible Cider dashboard for music playback, lyrics, and system stats.
 
+## Screenshots
+
+### Lyrics View
+
+![Lyrics view](assets/screenshots/lyrics.png)
+
+### Stats View
+
+![Stats view](assets/screenshots/stats.png)
+
 ## Features
 
 - Music view with album art, controls, and synced lyrics
