@@ -8,7 +8,10 @@ SERVICE_FILE="${SYSTEMD_DIR}/${APP_NAME}.service"
 SYSTEM_SERVICE_NAME="phone-post-wake.service"
 SYSTEM_SERVICE_FILE="/etc/systemd/system/${SYSTEM_SERVICE_NAME}"
 SYSTEM_SCRIPT_FILE="/usr/local/bin/dashy-sleep-pc"
+LOCAL_BIN_DIR="${HOME}/.local/bin"
+CONFIG_LAUNCHER="${LOCAL_BIN_DIR}/dashy-config"
 PYTHON_BIN="${PYTHON_BIN:-$(command -v python3)}"
+CONFIG_PYTHON="/usr/bin/python3"
 VENV_DIR="${INSTALL_DIR}/.venv"
 VENV_PYTHON="${VENV_DIR}/bin/python"
 VENV_PIP="${VENV_DIR}/bin/pip"
@@ -23,15 +26,23 @@ fi
 
 mkdir -p "${INSTALL_DIR}"
 mkdir -p "${SYSTEMD_DIR}"
+mkdir -p "${LOCAL_BIN_DIR}"
 mkdir -p "${INSTALL_DIR}/static"
 mkdir -p "${INSTALL_DIR}/scripts"
 
 install -m 0644 server.py "${INSTALL_DIR}/server.py"
 install -m 0644 index.html "${INSTALL_DIR}/index.html"
+install -m 0644 dashy_config.py "${INSTALL_DIR}/dashy_config.py"
 install -m 0644 requirements.txt "${INSTALL_DIR}/requirements.txt"
 install -m 0644 static/styles.css "${INSTALL_DIR}/static/styles.css"
 install -m 0644 static/app.js "${INSTALL_DIR}/static/app.js"
 install -m 0755 scripts/dashy-sleep-pc.sh "${INSTALL_DIR}/scripts/dashy-sleep-pc.sh"
+
+cat > "${CONFIG_LAUNCHER}" <<EOF
+#!/usr/bin/env bash
+exec "${CONFIG_PYTHON}" "${INSTALL_DIR}/dashy_config.py" "\$@"
+EOF
+chmod 0755 "${CONFIG_LAUNCHER}"
 
 "${PYTHON_BIN}" -m venv "${VENV_DIR}"
 "${VENV_PIP}" install --upgrade pip
@@ -103,6 +114,7 @@ echo "- Re-running ./install.sh updates the installed files and restarts the ser
 echo "- The service is intentionally de-prioritized for gaming."
 echo "- Sleep helper: ${SYSTEM_SCRIPT_FILE}"
 echo "- Post-wake service: ${SYSTEM_SERVICE_FILE}"
+echo "- Config app launcher: ${CONFIG_LAUNCHER}"
 echo "- For true boot-before-login behavior, enable linger manually:"
 echo "  loginctl enable-linger ${USER}"
 echo "- .local access works best when Avahi is running on this machine."

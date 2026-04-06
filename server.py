@@ -12,7 +12,7 @@ from urllib.parse import quote
 
 import psutil
 import requests
-from flask import Flask, jsonify, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory
 
 app = Flask(__name__)
 
@@ -23,15 +23,28 @@ MUSIXMATCH_BASE = "https://apic-desktop.musixmatch.com/ws/1.1/"
 APP_HOST = os.getenv("DASHY_HOST", "0.0.0.0")
 APP_PORT = int(os.getenv("DASHY_PORT", "5000"))
 APP_DIR = Path(__file__).resolve().parent
+CONFIG_DIR = Path(os.getenv("DASHY_CONFIG_DIR", os.path.expanduser("~/.config/dashy")))
+CONFIG_PATH = CONFIG_DIR / "config.json"
+
+DEFAULT_UI_CONFIG = {
+    "lyrics_font_scale": 1.0,
+    "album_art_scale": 1.0,
+    "active_lyric_scale": 1.03,
+    "control_mode": "buttons",
+    "swipe_start_threshold": 6.0,
+    "swipe_commit_threshold": 22.0,
+}
 
 # --- CACHE ---
 current_track_id = None
 cached_lyrics_payload = {"text": None, "is_synced": False, "source": None}
 musixmatch_token = None
 lyrics_lock = threading.RLock()
+config_lock = threading.RLock()
 http_session = requests.Session()
 lyrics_result_cache = OrderedDict()
 cider_request_pool = ThreadPoolExecutor(max_workers=4)
+ui_config = dict(DEFAULT_UI_CONFIG)
 
 LYRICS_CACHE_MAX_BYTES = int(os.getenv("LYRICS_CACHE_MAX_BYTES", str(32 * 1024 * 1024)))
 LYRICS_CACHE_MAX_ENTRIES = int(os.getenv("LYRICS_CACHE_MAX_ENTRIES", "512"))
@@ -87,6 +100,83 @@ def cpu_sampler_loop():
 
 cpu_sampler_thread = threading.Thread(target=cpu_sampler_loop, daemon=True)
 cpu_sampler_thread.start()
+
+
+def clamp_config_value(name, value):
+    if name == "control_mode":
+        return value if value in {"buttons", "swipe"} else DEFAULT_UI_CONFIG[name]
+
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        numeric = DEFAULT_UI_CONFIG[name]
+
+    limits = {
+        "lyrics_font_scale": (0.8, 1.5),
+        "album_art_scale": (0.85, 1.25),
+        "active_lyric_scale": (1.0, 1.12),
+        "swipe_start_threshold": (2.0, 24.0),
+        "swipe_commit_threshold": (8.0, 72.0),
+    }
+    minimum, maximum = limits[name]
+    return round(max(minimum, min(maximum, numeric)), 3)
+
+
+def normalize_ui_config(candidate):
+    return {
+        key: clamp_config_value(key, candidate.get(key, DEFAULT_UI_CONFIG[key]))
+        for key in DEFAULT_UI_CONFIG
+    }
+
+
+def persist_ui_config():
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    temp_path = CONFIG_PATH.with_suffix(".tmp")
+    with temp_path.open("w", encoding="utf-8") as handle:
+        json.dump(ui_config, handle, ensure_ascii=False, indent=2, sort_keys=True)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temp_path, CONFIG_PATH)
+
+
+def load_ui_config():
+    global ui_config
+    try:
+        with CONFIG_PATH.open("r", encoding="utf-8") as handle:
+            loaded = json.load(handle)
+    except FileNotFoundError:
+        with config_lock:
+            ui_config = dict(DEFAULT_UI_CONFIG)
+            persist_ui_config()
+        return
+    except Exception:
+        with config_lock:
+            ui_config = dict(DEFAULT_UI_CONFIG)
+            persist_ui_config()
+        return
+
+    with config_lock:
+        ui_config = normalize_ui_config(loaded if isinstance(loaded, dict) else {})
+
+
+def get_ui_config():
+    with config_lock:
+        return dict(ui_config)
+
+
+def update_ui_config(partial_config):
+    global ui_config
+    with config_lock:
+        merged = dict(ui_config)
+        for key in DEFAULT_UI_CONFIG:
+            if key in partial_config:
+                merged[key] = partial_config[key]
+        ui_config = normalize_ui_config(merged)
+        persist_ui_config()
+        return dict(ui_config)
+
+
+load_ui_config()
 
 
 def estimate_lyrics_payload_size(track_id, payload):
@@ -715,6 +805,7 @@ def build_stats_payload():
         cpu_value = stats_cache["cpu"]["value"]
     return {
         "mode": "stats",
+        "ui_config": get_ui_config(),
         "cpu": cpu_value,
         "ram": ram_percent,
         "ram_used_gb": round((memory.total - memory.available) / (1024 ** 3), 1),
@@ -779,6 +870,7 @@ def dashboard_data():
 
         payload = {
             "mode": "music",
+            "ui_config": get_ui_config(),
             "is_playing": is_playing,
             "has_active_track": True,
             "track": music_data.get("name"),
@@ -794,6 +886,19 @@ def dashboard_data():
         return jsonify(payload)
     except requests.RequestException:
         return jsonify(build_stats_payload())
+
+
+@app.route("/api/config", methods=["GET", "POST"])
+def config_data():
+    if request.method == "GET":
+        return jsonify(get_ui_config())
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"ok": False, "error": "Expected JSON object"}), 400
+
+    updated = update_ui_config(payload)
+    return jsonify({"ok": True, "config": updated})
 
 
 @app.route("/api/control/<action>", methods=["POST"])

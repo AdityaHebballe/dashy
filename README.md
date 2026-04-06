@@ -5,10 +5,15 @@ LAN-accessible Cider dashboard for music playback, lyrics, and system stats.
 ## Features
 
 - Music view with album art, controls, and synced lyrics
+- Touch album art controls:
+  - optional swipe mode with tap album art to play/pause
+  - swipe left/right on album art for previous/next track
+  - animated swipe feedback on the artwork
 - Stats view for CPU, GPU, RAM, disk, and temperatures
 - Lyrics caching in memory and on disk
 - Local-network access via `http://<hostname>.local:5000/`
 - `systemd --user` packaging for autostart
+- GTK4 config app for UI sizing
 - Optional suspend/wake helper for phone + PC sleep workflow
 
 ## Requirements
@@ -93,6 +98,10 @@ Root-level helper and service:
 - `/usr/local/bin/dashy-sleep-pc`
 - `/etc/systemd/system/phone-post-wake.service`
 
+Config app launcher:
+
+- `~/.local/bin/dashy-config`
+
 ## Services Created
 
 ### `dashy.service`
@@ -128,6 +137,29 @@ Check the process niceness:
 ```bash
 ps -o pid,ni,comm -C python
 ```
+
+## Config App
+
+Launch:
+
+```bash
+dashy-config
+```
+
+This opens a simple GTK4 app that updates Dashy through `http://127.0.0.1:5000/api/config`.
+
+Current options:
+
+- lyrics font scale
+- album art scale
+- active lyric highlight scale
+- control mode: `buttons` or `swipe`
+- swipe start threshold
+- swipe commit threshold
+
+Persisted config file:
+
+- `~/.config/dashy/config.json`
 
 ### `phone-post-wake.service`
 

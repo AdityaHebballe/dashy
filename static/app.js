@@ -1,5 +1,6 @@
         const API_URL = '/api/dashboard';
         const CONTROL_URL = '/api/control';
+        const CONFIG_URL = '/api/config';
 
         let currentTrackId = '';
         let currentLyricsKey = '';
@@ -17,6 +18,16 @@
         let lastProgressPaintTime = 0;
         let lyricScrollAnimationId = null;
         let lyricScrollTarget = 0;
+        let currentUiConfigKey = '';
+        let currentControlMode = 'buttons';
+        let gesturePointerId = null;
+        let gestureStartX = 0;
+        let gestureStartY = 0;
+        let gestureStartTime = 0;
+        let swipeDragging = false;
+        let swipeDirection = 0;
+        let swipeStartThreshold = 6;
+        let swipeCommitThreshold = 22;
 
         const STATS_POLL_INTERVAL_MS = 250;
         const MUSIC_POLL_INTERVAL_MS = 2500;
@@ -29,6 +40,11 @@
         const trackNameElem = document.getElementById('track-name');
         const artistNameElem = document.getElementById('artist-name');
         const albumArtElem = document.getElementById('album-art');
+        const artworkShellElem = document.querySelector('.artwork-shell');
+        const albumArtTouchElem = document.getElementById('album-art-touch');
+        const albumArtOverlayElem = document.getElementById('album-art-overlay');
+        const swipeHintPrevElem = document.getElementById('swipe-hint-prev');
+        const swipeHintNextElem = document.getElementById('swipe-hint-next');
         const blurElem = document.getElementById('bg-blur');
         const cpuStatElem = document.getElementById('cpu-stat');
         const gpuStatElem = document.getElementById('gpu-stat');
@@ -81,6 +97,63 @@
         const playPauseBtn = document.getElementById('playpause-btn');
         const prevBtn = document.getElementById('prev-btn');
         const nextBtn = document.getElementById('next-btn');
+
+        function applyUiConfig(config) {
+            if (!config || typeof config !== 'object') return;
+
+            const normalized = {
+                lyrics_font_scale: Number(config.lyrics_font_scale) || 1,
+                album_art_scale: Number(config.album_art_scale) || 1,
+                active_lyric_scale: Number(config.active_lyric_scale) || 1.03,
+                control_mode: config.control_mode === 'swipe' ? 'swipe' : 'buttons',
+                swipe_start_threshold: Number(config.swipe_start_threshold) || 6,
+                swipe_commit_threshold: Number(config.swipe_commit_threshold) || 22,
+            };
+            const nextKey = JSON.stringify(normalized);
+            if (nextKey === currentUiConfigKey) return;
+
+            currentUiConfigKey = nextKey;
+            document.documentElement.style.setProperty('--lyrics-font-scale', normalized.lyrics_font_scale);
+            document.documentElement.style.setProperty('--album-art-scale', normalized.album_art_scale);
+            document.documentElement.style.setProperty('--active-lyric-scale', normalized.active_lyric_scale);
+            currentControlMode = normalized.control_mode;
+            swipeStartThreshold = normalized.swipe_start_threshold;
+            swipeCommitThreshold = normalized.swipe_commit_threshold;
+            document.body.classList.toggle('control-mode-swipe', currentControlMode === 'swipe');
+            artworkShellElem.classList.toggle('swipe-enabled', currentControlMode === 'swipe');
+        }
+
+        function resetArtworkDragState() {
+            swipeDragging = false;
+            swipeDirection = 0;
+            artworkShellElem.classList.remove('swiping');
+            swipeHintPrevElem.classList.remove('active');
+            swipeHintNextElem.classList.remove('active');
+            document.documentElement.style.setProperty('--artwork-drag-x', '0px');
+        }
+
+        function finishArtworkSwipe(direction) {
+            if (!direction) {
+                resetArtworkDragState();
+                return;
+            }
+
+            document.documentElement.style.setProperty('--artwork-drag-x', `${direction * 96}px`);
+            swipeHintPrevElem.classList.toggle('active', direction > 0);
+            swipeHintNextElem.classList.toggle('active', direction < 0);
+
+            setTimeout(() => {
+                resetArtworkDragState();
+            }, 150);
+        }
+
+        function updateArtworkDrag(offsetX) {
+            const limited = Math.max(-72, Math.min(72, offsetX));
+            document.documentElement.style.setProperty('--artwork-drag-x', `${limited}px`);
+            artworkShellElem.classList.add('swiping');
+            swipeHintPrevElem.classList.toggle('active', limited > 10);
+            swipeHintNextElem.classList.toggle('active', limited < -10);
+        }
 
         function formatTime(seconds) {
             if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
@@ -335,10 +408,12 @@
             playbackIsPlaying = Boolean(isPlaying);
             playPauseBtn.textContent = playbackIsPlaying ? '❚❚' : '▶';
             playPauseBtn.setAttribute('aria-label', playbackIsPlaying ? 'Pause playback' : 'Resume playback');
+            albumArtOverlayElem.classList.toggle('paused', !playbackIsPlaying);
         }
 
         function updateMusicUI(data) {
             showView('music');
+            applyUiConfig(data.ui_config);
             setTheme(data.artwork);
 
             const displayTrack = data.track || 'Unknown track';
@@ -442,6 +517,7 @@
                 if (data.mode === 'music' && data.has_active_track) {
                     updateMusicUI(data);
                 } else {
+                    applyUiConfig(data.ui_config);
                     updateStatsUI(data);
                     showView('stats');
                 }
@@ -459,6 +535,72 @@
         prevBtn.addEventListener('click', () => sendControl('previous'));
         nextBtn.addEventListener('click', () => sendControl('next'));
         playPauseBtn.addEventListener('click', () => sendControl('playpause'));
+
+        albumArtTouchElem.addEventListener('pointerdown', (event) => {
+            if (currentControlMode !== 'swipe') return;
+            if (event.button !== undefined && event.button !== 0) return;
+            event.preventDefault();
+            gesturePointerId = event.pointerId;
+            gestureStartX = event.clientX;
+            gestureStartY = event.clientY;
+            gestureStartTime = Date.now();
+            swipeDragging = false;
+            swipeDirection = 0;
+            albumArtTouchElem.setPointerCapture(event.pointerId);
+        });
+
+        albumArtTouchElem.addEventListener('pointermove', (event) => {
+            if (currentControlMode !== 'swipe' || gesturePointerId !== event.pointerId) return;
+
+            const deltaX = event.clientX - gestureStartX;
+            const deltaY = event.clientY - gestureStartY;
+            if (!swipeDragging) {
+                if (Math.abs(deltaX) < swipeStartThreshold || Math.abs(deltaX) <= (Math.abs(deltaY) * 0.6)) {
+                    return;
+                }
+                swipeDragging = true;
+                swipeDirection = deltaX < 0 ? -1 : 1;
+            }
+
+            event.preventDefault();
+            updateArtworkDrag(deltaX);
+        });
+
+        albumArtTouchElem.addEventListener('pointerup', (event) => {
+            if (currentControlMode !== 'swipe') return;
+            if (gesturePointerId !== event.pointerId) return;
+
+            const deltaX = event.clientX - gestureStartX;
+            const deltaY = event.clientY - gestureStartY;
+            const absX = Math.abs(deltaX);
+            const absY = Math.abs(deltaY);
+            const elapsed = Date.now() - gestureStartTime;
+
+            if (absX > swipeCommitThreshold && absX > (absY * 0.95) && elapsed < 900) {
+                finishArtworkSwipe(deltaX < 0 ? -1 : 1);
+                sendControl(deltaX < 0 ? 'next' : 'previous');
+            } else if (absX < 18 && absY < 18 && elapsed < 350) {
+                finishArtworkSwipe(0);
+                sendControl('playpause');
+            } else {
+                finishArtworkSwipe(0);
+            }
+
+            albumArtTouchElem.releasePointerCapture(event.pointerId);
+            gesturePointerId = null;
+        });
+
+        albumArtTouchElem.addEventListener('pointercancel', (event) => {
+            if (gesturePointerId === event.pointerId) {
+                gesturePointerId = null;
+                resetArtworkDragState();
+            }
+        });
+
+        albumArtTouchElem.addEventListener('lostpointercapture', () => {
+            gesturePointerId = null;
+            resetArtworkDragState();
+        });
 
         startInterpolation();
         fetchDashboard();

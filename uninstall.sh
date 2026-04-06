@@ -6,6 +6,8 @@ INSTALL_DIR="${HOME}/.local/share/${APP_NAME}"
 SYSTEMD_DIR="${HOME}/.config/systemd/user"
 SERVICE_FILE="${SYSTEMD_DIR}/${APP_NAME}.service"
 CACHE_DIR="${HOME}/.cache/dashy"
+CONFIG_DIR="${HOME}/.config/dashy"
+CONFIG_LAUNCHER="${HOME}/.local/bin/dashy-config"
 SYSTEM_SERVICE_NAME="phone-post-wake.service"
 SYSTEM_SERVICE_FILE="/etc/systemd/system/${SYSTEM_SERVICE_NAME}"
 SYSTEM_SCRIPT_FILE="/usr/local/bin/dashy-sleep-pc"
@@ -23,5 +25,7 @@ fi
 
 rm -rf "${INSTALL_DIR}"
 rm -rf "${CACHE_DIR}"
+rm -rf "${CONFIG_DIR}"
+rm -f "${CONFIG_LAUNCHER}"
 
 echo "Dashy uninstalled."
