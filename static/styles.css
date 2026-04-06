@@ -396,6 +396,51 @@
             transform: none;
         }
 
+        .lyric-status {
+            opacity: 0.92;
+            color: var(--text-2);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .lyrics-loading-dots {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.7rem;
+            min-width: 5rem;
+        }
+
+        .lyrics-loading-dots span {
+            width: 0.72rem;
+            height: 0.72rem;
+            border-radius: 999px;
+            background: currentColor;
+            opacity: 0.18;
+            animation: lyrics-dot-pulse 1.05s infinite ease-in-out;
+        }
+
+        .lyrics-loading-dots span:nth-child(2) {
+            animation-delay: 0.14s;
+        }
+
+        .lyrics-loading-dots span:nth-child(3) {
+            animation-delay: 0.28s;
+        }
+
+        @keyframes lyrics-dot-pulse {
+            0%, 100% {
+                opacity: 0.18;
+            }
+            45% {
+                opacity: 0.95;
+            }
+            65% {
+                opacity: 0.4;
+            }
+        }
+
         body[data-stats-theme="macchiato"] {
             --stats-bg: #24273a;
             --stats-panel: rgba(54, 58, 79, 0.78);

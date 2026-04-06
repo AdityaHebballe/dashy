@@ -24,6 +24,7 @@
         let currentHasActiveTrack = false;
         let activeArtworkSlot = 'a';
         let activeBlurSlot = 'a';
+        let lyricsLoadingTimeout = null;
         let gesturePointerId = null;
         let gestureStartX = 0;
         let gestureStartY = 0;
@@ -355,6 +356,31 @@
             }
         }
 
+        function renderLyricsLoading() {
+            if (lyricsLoadingTimeout) {
+                clearTimeout(lyricsLoadingTimeout);
+            }
+
+            lyricsContainer.innerHTML = '';
+            parsedLyrics = [];
+            hasSyncedLyrics = false;
+            activeLyricIndex = -1;
+
+            const loadingLine = document.createElement('div');
+            loadingLine.className = 'lyric-line lyric-status active unsynced';
+            loadingLine.innerHTML = '<span class="lyrics-loading-dots" aria-label="Loading lyrics"><span></span><span></span><span></span></span>';
+            lyricsContainer.appendChild(loadingLine);
+
+            lyricsLoadingTimeout = setTimeout(() => {
+                lyricsContainer.innerHTML = '';
+                const emptyLine = document.createElement('div');
+                emptyLine.className = 'lyric-line lyric-status active unsynced';
+                emptyLine.textContent = 'No lyrics found for this track';
+                lyricsContainer.appendChild(emptyLine);
+                lyricsLoadingTimeout = null;
+            }, 4500);
+        }
+
         function applyLyricState(activeIndex) {
             const previousIndex = activeLyricIndex;
             if (previousIndex === activeIndex) return;
@@ -525,6 +551,11 @@
             applyUiConfig(data.ui_config);
             setTheme(data.artwork);
 
+            if (lyricsLoadingTimeout && data.lyrics) {
+                clearTimeout(lyricsLoadingTimeout);
+                lyricsLoadingTimeout = null;
+            }
+
             const displayTrack = data.track || 'Unknown track';
             const displayArtist = data.artist || 'Unknown artist';
             
@@ -565,7 +596,11 @@
                 animateLyricsSwap();
                 currentTrackId = nextTrackId;
                 currentLyricsKey = nextLyricsKey;
-                renderLyrics(data.lyrics, data.lyrics_synced);
+                if (data.lyrics) {
+                    renderLyrics(data.lyrics, data.lyrics_synced);
+                } else {
+                    renderLyricsLoading();
+                }
                 if (lyricScrollAnimationId) {
                     cancelAnimationFrame(lyricScrollAnimationId);
                     lyricScrollAnimationId = null;
@@ -578,7 +613,11 @@
             } else if (nextLyricsKey !== currentLyricsKey) {
                 animateLyricsSwap();
                 currentLyricsKey = nextLyricsKey;
-                renderLyrics(data.lyrics, data.lyrics_synced);
+                if (data.lyrics) {
+                    renderLyrics(data.lyrics, data.lyrics_synced);
+                } else {
+                    renderLyricsLoading();
+                }
                 if (lyricScrollAnimationId) {
                     cancelAnimationFrame(lyricScrollAnimationId);
                     lyricScrollAnimationId = null;
