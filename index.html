@@ -387,8 +387,8 @@
         }
 
         .stats-gauge {
-            width: 156px;
-            height: 94px;
+            width: 176px;
+            height: 106px;
             position: relative;
         }
 
@@ -449,7 +449,7 @@
             width: 64px;
             height: 164px;
             padding: 10px;
-            border-radius: 24px;
+            border-radius: 14px;
             background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.02));
             border: 1px solid rgba(255,255,255,0.08);
             display: flex;
@@ -460,7 +460,7 @@
         .stats-ram-fill {
             width: 100%;
             height: 0%;
-            border-radius: 16px;
+            border-radius: 7px;
             background: linear-gradient(180deg, rgba(255,255,255,1), rgba(255,255,255,0.42));
             transition: height 500ms ease;
             box-shadow: 0 0 18px rgba(255,255,255,0.18);
@@ -539,8 +539,8 @@
             }
 
             .stats-gauge {
-                width: 132px;
-                height: 84px;
+                width: 144px;
+                height: 90px;
             }
 
             .stats-gauge-value {
@@ -609,6 +609,125 @@
                 max-width: 100%;
                 font-size: clamp(1.35rem, 6.6vw, 1.9rem);
                 margin-bottom: 16px;
+            }
+        }
+
+        @media (orientation: portrait) and (max-aspect-ratio: 10/21) {
+            #stats-view {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                grid-template-rows: repeat(2, minmax(0, 1fr));
+                align-content: stretch;
+                gap: 12px;
+                padding: 12px;
+            }
+
+            .stats-card {
+                flex-direction: column;
+                align-items: center;
+                justify-content: flex-start;
+                gap: 8px;
+                padding: 14px 12px;
+            }
+
+            .stats-left,
+            .stats-right,
+            .stats-temp-right,
+            .stats-ram-left,
+            .stats-ram-copy {
+                width: 100%;
+                min-width: 0;
+                align-items: center;
+                justify-content: center;
+                text-align: center;
+            }
+
+            .stats-left,
+            .stats-ram-left {
+                gap: 8px;
+            }
+
+            .stats-right,
+            .stats-ram-copy {
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+            }
+
+            .stats-temp-right {
+                padding-left: 0;
+                font-size: 1.3rem;
+            }
+
+            .stats-temp-right svg {
+                width: 20px;
+                height: 20px;
+                margin-right: 6px;
+            }
+
+            .stats-gauge {
+                width: min(100%, 132px);
+                height: 80px;
+                margin: 0 auto;
+            }
+
+            .stats-gauge-value {
+                font-size: 1.35rem;
+                bottom: 6px;
+            }
+
+            .stats-bar {
+                width: 100%;
+                height: 10px;
+            }
+
+            .stats-value {
+                font-size: clamp(1.35rem, 5.8vw, 2rem);
+            }
+
+            .stats-subvalue {
+                font-size: 0.8rem;
+            }
+
+            .stats-ram-left {
+                flex: 0 0 auto;
+            }
+
+            .stats-ram-row {
+                flex-direction: column;
+                align-items: center;
+                gap: 10px;
+                width: 100%;
+            }
+
+            .stats-ram-copy {
+                order: 2;
+            }
+
+            .stats-ram-stack {
+                order: 3;
+                width: 42px;
+                height: 88px;
+                margin: 0 auto;
+            }
+
+            .stats-icon-big {
+                width: 42px;
+                height: 42px;
+            }
+
+            .stats-label {
+                font-size: 0.72rem;
+                letter-spacing: 0.1em;
+            }
+
+            .stats-temp-right {
+                font-size: 1rem;
+            }
+
+            .stats-temp-right svg {
+                width: 16px;
+                height: 16px;
+                margin-right: 4px;
             }
         }
 
