@@ -44,6 +44,10 @@ ExecStart=${VENV_PYTHON} ${INSTALL_DIR}/server.py
 Environment=PYTHONUNBUFFERED=1
 Environment=DASHY_HOST=0.0.0.0
 Environment=DASHY_PORT=${PORT}
+Nice=10
+IOSchedulingClass=idle
+IOSchedulingPriority=7
+CPUWeight=1
 Restart=on-failure
 RestartSec=2
 
@@ -52,10 +56,11 @@ WantedBy=default.target
 EOF
 
 systemctl --user daemon-reload
-systemctl --user enable --now "${APP_NAME}.service"
+systemctl --user enable "${APP_NAME}.service" >/dev/null 2>&1 || true
+systemctl --user restart "${APP_NAME}.service" >/dev/null 2>&1 || systemctl --user start "${APP_NAME}.service"
 
 echo
-echo "Dashy installed."
+echo "Dashy installed/updated."
 echo "Service: ${SERVICE_FILE}"
 echo "App dir: ${INSTALL_DIR}"
 echo "Venv: ${VENV_DIR}"
@@ -63,6 +68,8 @@ echo "URL: http://${HOSTNAME_LOCAL}:${PORT}/"
 echo
 echo "Notes:"
 echo "- This is a systemd user service, so it starts automatically when your user session starts."
+echo "- Re-running ./install.sh updates the installed files and restarts the service."
+echo "- The service is intentionally de-prioritized for gaming."
 echo "- For true boot-before-login behavior, enable linger manually:"
 echo "  loginctl enable-linger ${USER}"
 echo "- .local access works best when Avahi is running on this machine."
