@@ -19,6 +19,7 @@ CONFIG_PYTHON="/usr/bin/python3"
 VENV_DIR="${INSTALL_DIR}/.venv"
 VENV_PYTHON="${VENV_DIR}/bin/python"
 VENV_PIP="${VENV_DIR}/bin/pip"
+REQ_STAMP_FILE="${VENV_DIR}/.requirements.sha256"
 HOSTNAME_LOCAL="$(hostname).local"
 PORT="${DASHY_PORT:-5000}"
 PHONE_ADB_TARGET="${PHONE_ADB_TARGET:-192.168.0.8:5555}"
@@ -57,9 +58,18 @@ install -m 0644 "${INSTALL_DIR}/dashy-config.desktop" "${DESKTOP_FILE}"
 install -m 0644 "${INSTALL_DIR}/assets/dashy.svg" "${ICON_FILE}"
 sed -i "s|^Icon=dashy$|Icon=${ICON_FILE}|" "${DESKTOP_FILE}"
 
-"${PYTHON_BIN}" -m venv "${VENV_DIR}"
-"${VENV_PIP}" install --upgrade pip
-"${VENV_PIP}" install -r "${INSTALL_DIR}/requirements.txt"
+if [[ ! -x "${VENV_PYTHON}" ]]; then
+    "${PYTHON_BIN}" -m venv "${VENV_DIR}"
+fi
+
+REQ_HASH="$(sha256sum "${INSTALL_DIR}/requirements.txt" | awk '{print $1}')"
+INSTALLED_REQ_HASH="$(cat "${REQ_STAMP_FILE}" 2>/dev/null || true)"
+
+if [[ "${REQ_HASH}" != "${INSTALLED_REQ_HASH}" ]]; then
+    "${VENV_PIP}" install --upgrade pip
+    "${VENV_PIP}" install -r "${INSTALL_DIR}/requirements.txt"
+    printf '%s\n' "${REQ_HASH}" > "${REQ_STAMP_FILE}"
+fi
 
 cat > "${SERVICE_FILE}" <<EOF
 [Unit]
@@ -114,7 +124,9 @@ else
     echo "- Skipped system wake-service install because sudo is not available."
 fi
 
-echo
+echoadb devices
+List of devices attached
+192.168.0.8:5555        device
 echo "Dashy installed/updated."
 echo "Service: ${SERVICE_FILE}"
 echo "App dir: ${INSTALL_DIR}"

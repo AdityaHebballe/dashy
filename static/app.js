@@ -20,6 +20,7 @@
         let lyricScrollTarget = 0;
         let currentUiConfigKey = '';
         let currentControlMode = 'buttons';
+        let currentStatsTheme = 'macchiato';
         let currentHasActiveTrack = false;
         let gesturePointerId = null;
         let gestureStartX = 0;
@@ -107,6 +108,7 @@
                 lyrics_font_scale: Number(config.lyrics_font_scale) || 1,
                 album_art_scale: Number(config.album_art_scale) || 1,
                 active_lyric_scale: Number(config.active_lyric_scale) || 1.03,
+                stats_theme: ['macchiato', 'mocha', 'graphite', 'aurora', 'slate'].includes(config.stats_theme) ? config.stats_theme : 'slate',
                 control_mode: config.control_mode === 'swipe' ? 'swipe' : 'buttons',
                 swipe_start_threshold: Number(config.swipe_start_threshold) || 6,
                 swipe_commit_threshold: Number(config.swipe_commit_threshold) || 72,
@@ -119,9 +121,11 @@
             document.documentElement.style.setProperty('--album-art-scale', normalized.album_art_scale);
             document.documentElement.style.setProperty('--active-lyric-scale', normalized.active_lyric_scale);
             currentControlMode = normalized.control_mode;
+            currentStatsTheme = normalized.stats_theme;
             swipeStartThreshold = normalized.swipe_start_threshold;
             swipeCommitThreshold = normalized.swipe_commit_threshold;
             document.body.classList.toggle('control-mode-swipe', currentControlMode === 'swipe');
+            document.body.dataset.statsTheme = currentStatsTheme;
             artworkShellElem.classList.toggle('swipe-enabled', currentControlMode === 'swipe');
             syncAlbumArtOverlay();
         }

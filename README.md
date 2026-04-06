@@ -15,6 +15,7 @@ LAN-accessible Cider dashboard for music playback, lyrics, and system stats.
 - `systemd --user` packaging for autostart
 - GTK4 config app for UI sizing
 - Optional suspend/wake helper for phone + PC sleep workflow
+- `Slate` stats theme as the default, with alternate stats-only themes
 
 ## Requirements
 
@@ -153,6 +154,7 @@ Current options:
 - lyrics font scale
 - album art scale
 - active lyric highlight scale
+- stats theme, defaulting to `Slate`
 - control mode: `buttons` or `swipe`
 - swipe start threshold
 - swipe commit threshold

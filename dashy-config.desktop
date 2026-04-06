@@ -8,3 +8,4 @@ Icon=dashy
 Terminal=false
 Categories=Settings;Utility;
 StartupNotify=true
+StartupWMClass=local.dashy.config

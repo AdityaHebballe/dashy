@@ -33,6 +33,7 @@ DEFAULT_UI_CONFIG = {
     "control_mode": "buttons",
     "swipe_start_threshold": 6.0,
     "swipe_commit_threshold": 72.0,
+    "stats_theme": "slate",
 }
 
 # --- CACHE ---
@@ -40,6 +41,7 @@ current_track_id = None
 cached_lyrics_payload = {"text": None, "is_synced": False, "source": None}
 musixmatch_token = None
 lyrics_lock = threading.RLock()
+stats_lock = threading.RLock()
 config_lock = threading.RLock()
 http_session = requests.Session()
 lyrics_result_cache = OrderedDict()
@@ -90,7 +92,7 @@ def cpu_sampler_loop():
             sample = psutil.cpu_percent(interval=None)
             cpu_samples.append(sample)
             averaged = round(sum(cpu_samples) / len(cpu_samples), 1) if cpu_samples else sample
-            with lyrics_lock:
+            with stats_lock:
                 stats_cache["cpu"]["value"] = averaged
                 stats_cache["cpu"]["updated_at"] = time.time()
         except Exception:
@@ -105,6 +107,8 @@ cpu_sampler_thread.start()
 def clamp_config_value(name, value):
     if name == "control_mode":
         return value if value in {"buttons", "swipe"} else DEFAULT_UI_CONFIG[name]
+    if name == "stats_theme":
+        return value if value in {"macchiato", "mocha", "graphite", "aurora", "slate"} else DEFAULT_UI_CONFIG[name]
 
     try:
         numeric = float(value)
@@ -387,14 +391,14 @@ def store_cached_lyrics(track_id, payload):
 
 
 def get_cached_stat(stat_name, getter, now):
-    with lyrics_lock:
+    with stats_lock:
         cached = stats_cache[stat_name]
         if (now - cached["updated_at"]) < STATS_INTERVALS[stat_name]:
             return cached["value"]
 
     value = getter()
 
-    with lyrics_lock:
+    with stats_lock:
         stats_cache[stat_name]["value"] = value
         stats_cache[stat_name]["updated_at"] = now
 
@@ -801,7 +805,7 @@ def build_stats_payload():
     now = time.time()
     memory = psutil.virtual_memory()
     ram_percent = get_cached_stat("ram", lambda: memory.percent, now)
-    with lyrics_lock:
+    with stats_lock:
         cpu_value = stats_cache["cpu"]["value"]
     return {
         "mode": "stats",
