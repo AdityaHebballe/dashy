@@ -78,11 +78,28 @@
             cpu: { className: '', text: '', hasValue: false },
             gpu: { className: '', text: '', hasValue: false },
         };
+        const musicRenderState = {
+            track: '',
+            artist: '',
+            progressScale: '',
+            playPauseText: '',
+            playPauseLabel: '',
+            overlayText: '',
+            overlayVisible: false,
+        };
 
         function setGaugeValue(element, percent) {
             const circumference = 220;
             const normalized = Math.max(0, Math.min(100, percent));
             element.style.strokeDashoffset = `${circumference - ((normalized / 100) * circumference)}`;
+        }
+
+        function setProgressScale(progress) {
+            const normalized = Math.max(0, Math.min(1, progress));
+            const nextScale = `scaleX(${normalized})`;
+            if (musicRenderState.progressScale === nextScale) return;
+            progressFill.style.transform = nextScale;
+            musicRenderState.progressScale = nextScale;
         }
 
         function startInterpolation() {
@@ -100,8 +117,7 @@
                     syncLyrics(clampTime + 0.05);
 
                     if ((now - lastProgressPaintTime) >= PROGRESS_PAINT_INTERVAL_MS) {
-                        const progressPct = (clampTime / currentDuration) * 100;
-                        progressFill.style.transform = `scaleX(${Math.max(0, Math.min(1, progressPct / 100))})`;
+                        setProgressScale(clampTime / currentDuration);
                         lastProgressPaintTime = now;
                     }
                 } else {
@@ -172,10 +188,19 @@
             }
 
             if (currentControlMode === 'swipe' && currentHasActiveTrack && !playbackIsPlaying) {
-                albumArtOverlayElem.textContent = '❚❚';
-                albumArtOverlayElem.classList.add('visible');
+                if (musicRenderState.overlayText !== '❚❚') {
+                    albumArtOverlayElem.textContent = '❚❚';
+                    musicRenderState.overlayText = '❚❚';
+                }
+                if (!musicRenderState.overlayVisible) {
+                    albumArtOverlayElem.classList.add('visible');
+                    musicRenderState.overlayVisible = true;
+                }
             } else {
-                albumArtOverlayElem.classList.remove('visible');
+                if (musicRenderState.overlayVisible) {
+                    albumArtOverlayElem.classList.remove('visible');
+                    musicRenderState.overlayVisible = false;
+                }
             }
         }
 
@@ -491,29 +516,27 @@
             lyricScrollAnimationId = requestAnimationFrame(step);
         }
 
-        function syncLyrics(currentTime) {
-            if (!hasSyncedLyrics || parsedLyrics.length === 0) return;
+        function findSyncedLyricIndex(currentTime) {
+            let low = 0;
+            let high = parsedLyrics.length - 1;
+            let found = -1;
 
-            let nextActiveIndex = activeLyricIndex;
-
-            if (nextActiveIndex < 0 || currentTime < parsedLyrics[nextActiveIndex].time) {
-                nextActiveIndex = -1;
-                for (let i = 0; i < parsedLyrics.length; i += 1) {
-                    if (currentTime >= parsedLyrics[i].time) {
-                        nextActiveIndex = i;
-                    } else {
-                        break;
-                    }
-                }
-            } else {
-                for (let i = nextActiveIndex + 1; i < parsedLyrics.length; i += 1) {
-                    if (currentTime >= parsedLyrics[i].time) {
-                        nextActiveIndex = i;
-                    } else {
-                        break;
-                    }
+            while (low <= high) {
+                const middle = Math.floor((low + high) / 2);
+                if (currentTime >= parsedLyrics[middle].time) {
+                    found = middle;
+                    low = middle + 1;
+                } else {
+                    high = middle - 1;
                 }
             }
+
+            return found;
+        }
+
+        function syncLyrics(currentTime) {
+            if (!hasSyncedLyrics || parsedLyrics.length === 0) return;
+            const nextActiveIndex = findSyncedLyricIndex(currentTime);
 
             if (nextActiveIndex === -1 || nextActiveIndex === activeLyricIndex) return;
 
@@ -593,8 +616,16 @@
 
         function updatePlayPauseButton(isPlaying) {
             playbackIsPlaying = Boolean(isPlaying);
-            playPauseBtn.textContent = playbackIsPlaying ? '❚❚' : '▶';
-            playPauseBtn.setAttribute('aria-label', playbackIsPlaying ? 'Pause playback' : 'Resume playback');
+            const nextText = playbackIsPlaying ? '❚❚' : '▶';
+            const nextLabel = playbackIsPlaying ? 'Pause playback' : 'Resume playback';
+            if (musicRenderState.playPauseText !== nextText) {
+                playPauseBtn.textContent = nextText;
+                musicRenderState.playPauseText = nextText;
+            }
+            if (musicRenderState.playPauseLabel !== nextLabel) {
+                playPauseBtn.setAttribute('aria-label', nextLabel);
+                musicRenderState.playPauseLabel = nextLabel;
+            }
             syncAlbumArtOverlay();
         }
 
@@ -606,10 +637,14 @@
                 albumArtOverlayTimeout = null;
             }
 
-            albumArtOverlayElem.textContent = icon;
+            if (musicRenderState.overlayText !== icon) {
+                albumArtOverlayElem.textContent = icon;
+                musicRenderState.overlayText = icon;
+            }
             albumArtOverlayElem.classList.remove('visible');
             void albumArtOverlayElem.offsetWidth;
             albumArtOverlayElem.classList.add('visible');
+            musicRenderState.overlayVisible = true;
 
             albumArtOverlayTimeout = setTimeout(() => {
                 syncAlbumArtOverlay();
@@ -631,11 +666,13 @@
             const displayTrack = data.track || 'Unknown track';
             const displayArtist = data.artist || 'Unknown artist';
             
-            if (trackNameElem.textContent !== displayTrack) {
+            if (musicRenderState.track !== displayTrack) {
                 trackNameElem.textContent = displayTrack;
+                musicRenderState.track = displayTrack;
             }
-            if (artistNameElem.textContent !== displayArtist) {
+            if (musicRenderState.artist !== displayArtist) {
                 artistNameElem.textContent = displayArtist;
+                musicRenderState.artist = displayArtist;
             }
             
             let rawUrl = data.artwork?.url || (typeof data.artwork === 'string' ? data.artwork : '');
@@ -656,9 +693,7 @@
             lastProgressPaintTime = 0;
             playbackIsPlaying = Boolean(data.is_playing);
 
-            progressFill.style.transform = currentDuration > 0
-                ? `scaleX(${Math.max(0, Math.min(1, localTime / currentDuration))})`
-                : 'scaleX(0)';
+            setProgressScale(currentDuration > 0 ? (localTime / currentDuration) : 0);
             updatePlayPauseButton(playbackIsPlaying);
 
             const nextTrackId = `${data.track || ''}::${data.artist || ''}::${data.duration || ''}`;
