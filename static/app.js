@@ -20,6 +20,7 @@
         let lyricScrollTarget = 0;
         let currentUiConfigKey = '';
         let currentControlMode = 'buttons';
+        let currentHasActiveTrack = false;
         let gesturePointerId = null;
         let gestureStartX = 0;
         let gestureStartY = 0;
@@ -122,6 +123,7 @@
             swipeCommitThreshold = normalized.swipe_commit_threshold;
             document.body.classList.toggle('control-mode-swipe', currentControlMode === 'swipe');
             artworkShellElem.classList.toggle('swipe-enabled', currentControlMode === 'swipe');
+            syncAlbumArtOverlay();
         }
 
         function resetArtworkDragState() {
@@ -131,6 +133,20 @@
             swipeHintPrevElem.classList.remove('active');
             swipeHintNextElem.classList.remove('active');
             document.documentElement.style.setProperty('--artwork-drag-x', '0px');
+        }
+
+        function syncAlbumArtOverlay() {
+            if (albumArtOverlayTimeout) {
+                clearTimeout(albumArtOverlayTimeout);
+                albumArtOverlayTimeout = null;
+            }
+
+            if (currentControlMode === 'swipe' && currentHasActiveTrack && !playbackIsPlaying) {
+                albumArtOverlayElem.textContent = '❚❚';
+                albumArtOverlayElem.classList.add('visible');
+            } else {
+                albumArtOverlayElem.classList.remove('visible');
+            }
         }
 
         function finishArtworkSwipe(direction) {
@@ -409,6 +425,7 @@
             playbackIsPlaying = Boolean(isPlaying);
             playPauseBtn.textContent = playbackIsPlaying ? '❚❚' : '▶';
             playPauseBtn.setAttribute('aria-label', playbackIsPlaying ? 'Pause playback' : 'Resume playback');
+            syncAlbumArtOverlay();
         }
 
         function flashAlbumArtOverlay(icon) {
@@ -420,18 +437,19 @@
             }
 
             albumArtOverlayElem.textContent = icon;
-            albumArtOverlayElem.classList.remove('flash');
+            albumArtOverlayElem.classList.remove('visible');
             void albumArtOverlayElem.offsetWidth;
-            albumArtOverlayElem.classList.add('flash');
+            albumArtOverlayElem.classList.add('visible');
 
             albumArtOverlayTimeout = setTimeout(() => {
-                albumArtOverlayElem.classList.remove('flash');
+                syncAlbumArtOverlay();
                 albumArtOverlayTimeout = null;
-            }, 280);
+            }, 650);
         }
 
         function updateMusicUI(data) {
             showView('music');
+            currentHasActiveTrack = true;
             applyUiConfig(data.ui_config);
             setTheme(data.artwork);
 
@@ -536,9 +554,11 @@
                 if (data.mode === 'music' && data.has_active_track) {
                     updateMusicUI(data);
                 } else {
+                    currentHasActiveTrack = false;
                     applyUiConfig(data.ui_config);
                     updateStatsUI(data);
                     showView('stats');
+                    syncAlbumArtOverlay();
                 }
             } catch (error) {
                 console.error('Dashboard offline or unreachable', error);
@@ -600,7 +620,12 @@
                 sendControl(deltaX < 0 ? 'next' : 'previous');
             } else if (absX < 18 && absY < 18 && elapsed < 350) {
                 finishArtworkSwipe(0);
-                flashAlbumArtOverlay(playbackIsPlaying ? '❚❚' : '▶');
+                if (playbackIsPlaying) {
+                    playbackIsPlaying = false;
+                    syncAlbumArtOverlay();
+                } else {
+                    flashAlbumArtOverlay('▶');
+                }
                 sendControl('playpause');
             } else {
                 finishArtworkSwipe(0);

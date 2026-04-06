@@ -162,10 +162,10 @@
             font-weight: 700;
             opacity: 0;
             pointer-events: none;
-            transition: opacity 220ms ease;
+            transition: opacity 420ms ease;
         }
 
-        .album-art-overlay.flash {
+        .album-art-overlay.visible {
             opacity: 1;
         }
 
